@@ -1,0 +1,67 @@
+server:
+  listen_address: "127.0.0.1:8080"
+  mcp_path: "/mcp"
+  # Required for HTTP deployments exposed beyond localhost unless a trusted
+  # reverse proxy authenticates every request. Optional for stdio/local use.
+  http_bearer_token: "${FORTI_MCP_HTTP_TOKEN}"
+  # Set only when a trusted reverse proxy authenticates every request.
+  # http_trusted_proxy: true
+  refresh_interval: "1h"
+  refresh_timeout: "2m"
+  request_timeout: "30s"
+  max_concurrent_calls: 8
+  # After each background inventory refresh, re-read policy tables that a
+  # tool already cached so the next lookup matches the new snapshot.
+  # prefetch_cached_policies: false
+  # Largest tool result sent to the agent (bytes, default 512 KiB); larger
+  # answers are replaced by an error that says how to narrow the request.
+  # max_result_bytes: 524288
+
+profiles:
+  - name: fmg-primary
+    product: fortimanager
+    url: "https://fmg.example.invalid"
+    username: "${FMG_USERNAME}"
+    password: "${FMG_PASSWORD}"
+    # API keys are also supported by FortiManager and FortiAnalyzer. The key
+    # is sufficient by itself; username/password are not used when set and
+    # the client sends Authorization: Bearer <api_key>.
+    # For API-key-only auth, remove the username/password fields above.
+    # api_key: "${FMG_API_KEY}"
+    # Optional allowlist. Inventory and every ADOM-scoped action use only
+    # these ADOMs. Omit for unrestricted discovery.
+    # adoms: ["root", "customer-a"]
+    insecure_skip_verify: false
+    # Only for controlled HTTP lab endpoints; production profiles must use HTTPS.
+    # allow_insecure_http: true
+    default: true
+
+  - name: faz-primary
+    product: fortianalyzer
+    url: "https://faz.example.invalid"
+    username: "${FAZ_USERNAME}"
+    password: "${FAZ_PASSWORD}"
+    # Optional ADOM allowlist for log/read actions.
+    # adoms: ["root"]
+    # IANA time zone of the FortiAnalyzer (or its ADOM). Log View time ranges
+    # are wall-clock values in that zone; set it so RFC3339 inputs with any
+    # offset are converted correctly. Without it the caller's wall clock is
+    # sent unchanged and every search result carries a warning.
+    # timezone: "Europe/Berlin"
+    insecure_skip_verify: false
+    default: true
+
+# FortiGuard URL rating for rate_url, always through the FortiManager
+# proxy. FortiOS 7.4 rates only via POST, which FortiManager forwards only for
+# an account with JSON API Read-Write; the MCP server itself permits no POST
+# other than this one rating lookup.
+# rating:
+#   # Dedicated rating FortiGate; without it the tool rates through the device
+#   # given in the request (the FortiGate on the user's traffic path).
+#   device: "example-rating-fw"
+#   # adom: "example-adom"    # optional, resolved from inventory
+#   # vdom: "root"
+#   # fortimanager_profile: "fmg-primary"   # default FortiManager profile
+#   # Optional dedicated FortiManager rating account (JSON API Read-Write,
+#   # otherwise read-only profile). Without it the profile's own account is used.
+#   # api_key: "${FMG_RATING_API_KEY}"

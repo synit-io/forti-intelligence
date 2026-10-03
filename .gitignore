@@ -1,0 +1,20 @@
+.DS_Store
+/forti-intelligence
+/bin/
+/dist/
+/testdata/
+*.test
+*.out
+.env
+.env.*
+!.env.example
+# Local credentials, certificates and appliance logs belong outside Git.
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+*.local.yaml
+forti-intelligence.yaml
+coverage.out
+config.yaml

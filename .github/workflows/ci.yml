@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to verify before publishing
+        required: false
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - run: go test -race ./...
+      - run: go vet ./...
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - run: docker build -t forti-intelligence:ci .
