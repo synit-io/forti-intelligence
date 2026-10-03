@@ -6,6 +6,16 @@ The server brings inventory, routing, policies, inspection profiles, current fir
 
 Forti Intelligence is open source, self-hosted, and read-only at the tool boundary. It supports multiple named appliance connections, scoped ADOM access, and local stdio or Streamable HTTP clients. You build and run it against your own appliances; credentials and the MCP endpoint belong to your deployment.
 
+**Free to use. Open Source (Apache 2 License). Self-hostable.**
+
+[🌐 synit.io](https://www.synit.io/) ·
+[🐳 Docker Hub](https://hub.docker.com/r/synitio/forti-intelligence) ·
+[📖 Documentation](docs/operations.md) ·
+[⚖️ License](LICENSE) ·
+[👥 Discord Community](https://www.synit.io/discord)
+
+---
+
 ## One MCP endpoint for multiple FortiGates
 
 The MCP host connects to FortiManager and, optionally, FortiAnalyzer over their JSON-RPC APIs. FortiManager supplies the managed-device inventory and stored configuration; FortiAnalyzer supplies recorded traffic and security events. The assistant can investigate multiple FortiGates, VDOMs, ADOMs, and manager profiles through one Forti Intelligence endpoint, without configuring a separate MCP connection or credentials for each FortiGate.
