@@ -4,7 +4,7 @@ Build and connect a self-hosted server to your own Fortinet appliances. For capa
 
 ## Requirements
 
-- Go 1.25 or newer to build locally, or Docker to build and run the container
+- Go 1.25 or newer to build locally (latest stable recommended), or Docker to build and run the container
 - An MCP client supporting stdio or Streamable HTTP
 - FortiManager 7.4.x or newer with JSON API access enabled for inventory and FortiGate investigations
 - FortiAnalyzer 7.x or newer with JSON API access enabled for analyzer status and log workflows (optional for FortiManager-only use)
@@ -12,6 +12,10 @@ Build and connect a self-hosted server to your own Fortinet appliances. For capa
 - HTTPS access from the MCP host to the configured FortiManager and optional FortiAnalyzer profiles, and DNS access for hostname lookups
 
 The official MCP Go SDK is pinned to v1.8.0, which supports MCP protocol `2026-07-28` and older negotiated versions.
+
+Dependency maintenance is configured in [`.github/dependabot.yml`](../.github/dependabot.yml). Dependabot checks daily for Go module updates (including indirect dependencies), Docker image updates, and GitHub Actions updates, including major releases. Keep dependency pins on stable releases: Dependabot excludes prereleases when the current version is stable. Review update pull requests and their CI results before merging.
+
+CI selects Go's `stable` alias, so tests and vet always run on the latest stable release. The Docker builder uses an explicit stable Go version maintained by Dependabot. The runtime image is pinned by digest so Dependabot can propose updates even when its `nonroot` tag stays unchanged. The `go` directive in `go.mod` remains the minimum supported Go version; it does not select the CI or Docker compiler.
 
 FortiManager 7.4.x and newer are supported for the core ADOM, device, policy-package, object, interface, and policy-read routes. IPv6 policies are read from `firewall/policy`, which holds IPv4 and IPv6 policies since FortiOS 6.4 (separate `srcaddr6`/`dstaddr6` columns), plus the legacy `policy6` table of older ADOMs, whose absence is cached; `policy64` holds NAT64 policies and is not read as IPv6 policies. Live policy lookup is proxied to the managed FortiGate, so its availability also depends on the target FortiOS release and API permissions, not only on the FortiManager version.
 

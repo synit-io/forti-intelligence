@@ -1,4 +1,4 @@
-FROM golang:1.25 AS build
+FROM golang:1.27.3 AS build
 
 WORKDIR /src
 COPY go.mod go.sum* ./
@@ -9,7 +9,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} 
 
 # base (not static) ships the CA bundle and zoneinfo. The nonroot tag already
 # runs as uid 65532, so the image does not add users.
-FROM gcr.io/distroless/base-debian12:nonroot
+FROM gcr.io/distroless/base-debian12:nonroot@sha256:7f0c72cd138b442ae0deeb69c08b1acf5525439ba251a49ad93c320a061567e5
 LABEL org.opencontainers.image.title="Forti Intelligence" \
       org.opencontainers.image.description="Read-only Fortinet troubleshooting MCP server" \
       org.opencontainers.image.source="https://github.com/synit-io/forti-intelligence" \
