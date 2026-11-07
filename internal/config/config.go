@@ -75,9 +75,9 @@ type ServerConfig struct {
 	RefreshTimeout     string `yaml:"refresh_timeout"`
 	RequestTimeout     string `yaml:"request_timeout"`
 	MaxConcurrentCalls int    `yaml:"max_concurrent_calls"`
-	// MaxResultBytes caps one tool result. A larger answer is replaced by an
-	// error that says how to narrow the request, so an agent never receives
-	// megabytes it cannot read. 0 means the default.
+	// MaxResultBytes caps the inner JSON text of one tool result. Oversized
+	// results return errors with bounded recovery metadata where supported.
+	// 0 means the default.
 	MaxResultBytes int `yaml:"max_result_bytes"`
 	// PrefetchCachedPolicies re-reads policy tables that a tool already
 	// cached, after each background inventory refresh, so the next lookup
@@ -85,8 +85,8 @@ type ServerConfig struct {
 	PrefetchCachedPolicies bool `yaml:"prefetch_cached_policies"`
 }
 
-// DefaultMaxResultBytes is the default tool result cap (512 KiB, roughly
-// 130k tokens).
+// DefaultMaxResultBytes is the default inner JSON result cap (512 KiB).
+// Byte counts do not establish host/model token usage.
 const DefaultMaxResultBytes = 512 << 10
 
 type ProfileConfig struct {

@@ -4,7 +4,7 @@ Use this reference when an investigation returns stale, partial, denied, offline
 
 ## Shared tool contract
 
-Every tool input field carries a schema description, so an MCP client can see accepted values without consulting this file. Tool errors name the rejected input, list the accepted alternatives (profile names, configured ADOMs, permitted path prefixes) and end with an operator hint. Results are sent once as compact JSON text; raw appliance records are omitted unless `include_raw` is set. A result larger than `server.max_result_bytes` (default 512 KiB) is not sent; the tool returns an error that says how to narrow the request instead. Tools that act on one FortiGate take the ADOM from the inventory when only `device` is given.
+Every tool input field carries a schema description, so an MCP client can see accepted values without consulting this file. Tool errors name the rejected input, list the accepted alternatives (profile names, configured ADOMs, permitted path prefixes) and end with an operator hint. Results are sent once as compact JSON text; raw appliance records are omitted unless `include_raw` is set. A result larger than `server.max_result_bytes` (default 512 KiB) returns an explicit overflow error. Log and investigation errors preserve bounded scope, coverage and recovery metadata where it fits; omitted records are counted separately from delivered records. Generic reads return narrowing advice. The cap applies to the inner JSON text, not the complete MCP wire response. Tools that act on one FortiGate take the ADOM from the inventory when only `device` is given.
 
 ## Inventory freshness and scope
 
@@ -18,7 +18,7 @@ Every JSON-RPC read retries transient failures (timeouts, connection errors, HTT
 
 `server.refresh_interval` controls how often the background refresh runs; it defaults to one hour. `server.refresh_timeout` gives that fan-out its own deadline, separate from the shorter per-request `request_timeout`.
 
-Every FortiManager and FortiAnalyzer profile has exactly one in-flight JSON-RPC request at a time, shared by inventory refreshes, tool calls and web filter lookups. Waiting tool requests are served before waiting inventory-refresh requests, so a running refresh does not delay answers. Each tool call logs `MCP tool completed` with its duration, the appliance requests it made (`fortinet_requests`), lane wait, wire time, retries and the slowest resource. The reason for the single lane: FortiManager answers overlapping requests of one API key or session with spurious `code -11: No permission for the resource` results for random ADOMs. `max_concurrent_calls` still bounds work across profiles.
+Every FortiManager and FortiAnalyzer profile has exactly one in-flight JSON-RPC request at a time, shared by inventory refreshes, tool calls and web filter lookups. Waiting tool requests are served before waiting inventory-refresh requests, so a running refresh does not delay answers. Each tool call logs `MCP tool completed` with its duration, the appliance requests it made (`fortinet_requests`), lane wait, wire time, retries and the slowest resource. The reason for the single lane: FortiManager answers overlapping requests of one API key or session with spurious `code -11: No permission for the resource` results for random ADOMs. `max_concurrent_calls` bounds inventory work across profiles; it is not a global MCP admission limit. Each tool keeps its request deadline.
 
 ADOMs of one profile are refreshed one after another, never interleaved: FortiManager evaluates ADOM-less device database paths (`/pm/config/device/<dev>/…`) in the ADOM of the preceding request, so interleaving made reads of healthy devices fail at random.
 
@@ -48,6 +48,10 @@ All requests of one FortiManager or FortiAnalyzer account go through one serial 
 - Retries are bounded: reads retry transient failures with backoff; a proxied FortiGate read is repeated only when no answer arrived; the FortiAnalyzer search task is re-submitted only when the request provably never left the server. A denied read is re-checked once after 0.5 s with the lane held, so no other request can cause a second spurious denial.
 
 Every tool call logs `MCP tool completed` with its duration, the appliance requests it made, the time spent waiting for the lane and on the wire, retries and the slowest resource. Requests slower than 5 s are logged as `slow Fortinet request`, and web filter loads and inventory refreshes log their own request counts, so a slow call can be traced to its cause. A call that times out while waiting for the lane says so in its hint instead of blaming appliance reachability.
+
+Result metrics add `forti_intelligence_tool_results_total`, `forti_intelligence_tool_result_bytes_sum` (attempted JSON before overflow) and `forti_intelligence_tool_returned_bytes_sum` (returned JSON text). Labels are restricted to tool, serialization outcome (`ok`, `overflow`, `serialization_error`) and typed evidence state (`unspecified`, `complete`, `incomplete`, `partial`). Log/investigation state comes from their typed fields; other tools report `unspecified`. `complete` does not establish delivery, exhaustive log matches, or return-path coverage. Conventional errors before serialization do not contribute a result sample; existing call counters still include them. Explicit `isError` results count as call errors even when the Go handler returns nil to preserve their payload.
+
+These metrics contain no payload values or tokenizer estimates. Use [the evaluation procedure](mcp-evaluation.md) to prepare catalog/result fixtures and compare byte sizes. Host token usage, selection quality and follow-up costs require separate host measurements.
 
 ## Interpret evidence
 

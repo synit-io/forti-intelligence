@@ -8,6 +8,7 @@ Start a traffic investigation with ownership, an ordered configured path, and po
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
+| `detail` | string | No | `full` (default) or `compact`; compact removes duplicate first-hop/route-hop copies and raw live payloads while preserving diagnostic evidence. |
 | `source_ip` | string | Yes | Source IPv4 or IPv6 address of the flow |
 | `destination_ip` | string | Yes | Destination IP address or hostname |
 | `destination_port` | integer | No | Destination port. When set, the firewall policy lookup runs; when omitted, that step is skipped. |
@@ -17,7 +18,7 @@ Start a traffic investigation with ownership, an ordered configured path, and po
 | `profile` | string | No | FortiManager profile name. All inventoried profiles are searched when omitted. |
 | `adom` | string | No | Limit candidates to one ADOM |
 | `device` | string | No | Limit candidates to one managed FortiGate |
-| `vdom` | string | No | Limit web filter results to this VDOM |
+| `vdom` | string | No | Limit ownership, routing, policy and web-filter scope to this VDOM |
 | `url` | string | No | When set, rate this URL and check web filter profiles for it |
 | `include_logs` | boolean | No | Also submit a FortiAnalyzer traffic log search for this flow |
 | `log_profile` | string | No | FortiAnalyzer profile for include_logs. The default FortiAnalyzer profile is used when omitted. |
@@ -53,11 +54,15 @@ The identifiers and values below are fictional. Replace them with your verified 
 
 `investigate_traffic` accepts a source, destination, protocol and ports, plus optional explicit scope and `url`. Its `hops` array joins route, policy, web-filter, warnings and errors for each traced hop and destination address. Top-level `policy` and `web_filter` retain only the first hop's evidence for existing clients. With `url`, the server rates once and reuses the category across scoped hop checks. A configured denial skips web filtering on that policy; its confidence and unresolved conditions still apply; an unresolved carrying policy returns candidate profiles with a warning. One hop's failure does not suppress other evidence.
 
+Omitting `detail` or using `full` retains the existing JSON shape. `compact` keeps ordered evidence in `hops`, path endings and alternative destinations in `route`, inventory timestamps/freshness, all policy decisions/matches and live/configured disagreements, warnings/errors, web-filter evidence and optional log task state. It adds `flow`, `evidence_sources`, `coverage`, `omitted` counts and an omission notice. When routing has no scoped hop, the fallback top-level policy remains available. Omission counts describe representation, not evidence completeness; raw live lookup payloads can be requested with `detail: full` or focused tools.
+
+Oversized investigations return `isError: true`, `representation_truncated` and narrowing guidance. Request `detail: compact`, one destination and device/VDOM, or focused tools. Any omitted log rows need the same offset with a smaller limit, as indicated by their recovery action.
+
 The investigation evaluates downstream hops using the original flow tuple and states that limit. Verify NAT with sessions or logs, then repeat downstream lookups using the translated tuple. Configured routing and policy matches do not establish observed delivery or return-path symmetry.
 
 `source_ip` and `destination_ip` are required. A missing `destination_port` skips the policy step. Provide `source_port` and ingress when known, and keep unresolved scopes separate.
 
-`include_logs` adds a traffic search using the analyzer profile/ADOM and time window, defaulting to the last hour. It returns what finished before the request deadline; inspect errors and resume unfinished searches with their `task_id`. This does not replace separately mapped, per-hop searches with translated tuples. See the [flow guide](../use-cases.md) and [SYSTEM.md](../../SYSTEM.md) for that process.
+`include_logs` adds a traffic search using the analyzer profile/ADOM and time window, defaulting to the last hour. It returns what finished before the request deadline; inspect errors and use the log `next_action` to continue. This does not replace separately mapped, per-hop searches with translated tuples. See the [flow guide](../use-cases.md) and [SYSTEM.md](../../SYSTEM.md) for that process.
 
 ## Related tools
 

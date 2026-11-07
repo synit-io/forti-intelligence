@@ -7,6 +7,32 @@ import (
 	"time"
 )
 
+type resultKey struct{ outcome, state string }
+type resultStat struct{ count, encoded, returned int64 }
+
+func (s *Server) recordResult(tool string, measurement resultMeasurement) {
+	s.toolMu.Lock()
+	defer s.toolMu.Unlock()
+	if s.toolStats == nil {
+		s.toolStats = make(map[string]*toolStat)
+	}
+	if s.toolStats[tool] == nil {
+		s.toolStats[tool] = &toolStat{}
+	}
+	stat := s.toolStats[tool]
+	if stat.results == nil {
+		stat.results = make(map[resultKey]*resultStat)
+	}
+	key := resultKey{measurement.outcome, measurement.state}
+	if stat.results[key] == nil {
+		stat.results[key] = &resultStat{}
+	}
+	result := stat.results[key]
+	result.count++
+	result.encoded += int64(measurement.encoded)
+	result.returned += int64(measurement.returned)
+}
+
 // Prometheus renders inventory gauges and per-tool counters in Prometheus
 // text format. health is the map produced for /healthz.
 func (s *Server) Prometheus(health map[string]any) string {
@@ -50,7 +76,13 @@ func (s *Server) Prometheus(health map[string]any) string {
 	copied := make(map[string]toolStat, len(s.toolStats))
 	for name, stat := range s.toolStats {
 		names = append(names, name)
-		copied[name] = *stat
+		copyStat := *stat
+		copyStat.results = make(map[resultKey]*resultStat, len(stat.results))
+		for key, result := range stat.results {
+			copyResult := *result
+			copyStat.results[key] = &copyResult
+		}
+		copied[name] = copyStat
 	}
 	s.toolMu.Unlock()
 	sort.Strings(names)
@@ -59,6 +91,9 @@ func (s *Server) Prometheus(health map[string]any) string {
 		fmt.Fprintf(&builder, "# HELP forti_intelligence_tool_duration_seconds_sum Total tool duration in seconds\n# TYPE forti_intelligence_tool_duration_seconds_sum counter\n")
 		fmt.Fprintf(&builder, "# HELP forti_intelligence_tool_lane_wait_seconds_sum Time spent waiting for the appliance request lane\n# TYPE forti_intelligence_tool_lane_wait_seconds_sum counter\n")
 		fmt.Fprintf(&builder, "# HELP forti_intelligence_tool_fortinet_requests_total Appliance requests made by tool calls\n# TYPE forti_intelligence_tool_fortinet_requests_total counter\n")
+		fmt.Fprintln(&builder, "# HELP forti_intelligence_tool_results_total Serialized results by bounded outcome and explicit evidence state\n# TYPE forti_intelligence_tool_results_total counter")
+		fmt.Fprintln(&builder, "# HELP forti_intelligence_tool_result_bytes_sum Attempted JSON bytes before size fallback, not model tokens\n# TYPE forti_intelligence_tool_result_bytes_sum counter")
+		fmt.Fprintln(&builder, "# HELP forti_intelligence_tool_returned_bytes_sum Returned JSON text bytes after size fallback, not model tokens\n# TYPE forti_intelligence_tool_returned_bytes_sum counter")
 		for _, name := range names {
 			stat := copied[name]
 			label := fmt.Sprintf("tool=%q", name)
@@ -67,6 +102,18 @@ func (s *Server) Prometheus(health map[string]any) string {
 			fmt.Fprintf(&builder, "forti_intelligence_tool_duration_seconds_sum{%s} %g\n", label, stat.duration.Seconds())
 			fmt.Fprintf(&builder, "forti_intelligence_tool_lane_wait_seconds_sum{%s} %g\n", label, stat.lane.Seconds())
 			fmt.Fprintf(&builder, "forti_intelligence_tool_fortinet_requests_total{%s} %d\n", label, stat.fortinetRequests)
+			for _, outcome := range []string{"ok", "overflow", "serialization_error"} {
+				for _, state := range []string{"unspecified", "complete", "incomplete", "partial"} {
+					result := stat.results[resultKey{outcome, state}]
+					if result == nil {
+						continue
+					}
+					labels := fmt.Sprintf("%s,outcome=%q,state=%q", label, outcome, state)
+					fmt.Fprintf(&builder, "forti_intelligence_tool_results_total{%s} %d\n", labels, result.count)
+					fmt.Fprintf(&builder, "forti_intelligence_tool_result_bytes_sum{%s} %d\n", labels, result.encoded)
+					fmt.Fprintf(&builder, "forti_intelligence_tool_returned_bytes_sum{%s} %d\n", labels, result.returned)
+				}
+			}
 		}
 	}
 	return builder.String()

@@ -35,6 +35,7 @@ type InvestigateInput struct {
 
 // InvestigateOutput collects the evidence from each step of the investigation.
 type InvestigateOutput struct {
+	Input     *InvestigateInput         `json:"-"`
 	Ownership inventory.OwnershipResult `json:"ownership"`
 	Route     RouteLookupOutput         `json:"route"`
 	Policy    *PolicyLookupOutput       `json:"policy,omitempty"`
@@ -77,7 +78,7 @@ func (s *Service) Investigate(ctx context.Context, input InvestigateInput) (Inve
 		return InvestigateOutput{}, fmt.Errorf("source_port must be between 0 and 65535")
 	}
 
-	var output InvestigateOutput
+	output := InvestigateOutput{Input: &input}
 	ownership, err := s.ResolveIPOwnership(ctx, inventory.OwnershipQuery{
 		IP: input.SourceIP, Profile: input.Profile, ADOM: input.ADOM, Device: input.Device, VDOM: input.VDOM,
 	})
@@ -267,6 +268,10 @@ func singlePolicyID(policy *PolicyLookupOutput, device string) int {
 func investigateHopLabel(hop InvestigateHop) string {
 	return fmt.Sprintf("hop %d %s/%s/%s/%s to %s", hop.Route.Hop, hop.Route.Profile, hop.Route.ADOM, hop.Route.Device, hop.Route.VDOM, hop.DestinationIP)
 }
+
+// LogResultUsable exposes the investigation's usable-log criteria at the MCP
+// boundary, so execution errors retain only supported partial log results.
+func LogResultUsable(result fortinet.LogSearchResult) bool { return logResultUsable(result) }
 
 // logResultUsable reports whether a log search returned something worth
 // attaching. TaskID and Records are untyped appliance values.

@@ -34,7 +34,7 @@ Use inventory for ownership, live FortiGate reads for operational state, policy 
 Inventory rules:
 
 - Judge freshness using snapshot time, per-profile stale state, device `data_as_of`, and refresh errors. A fresh overall timestamp does not erase retained stale data.
-- Inventory refreshes in the background. Call `refresh_inventory` only when newer data is needed, such as after a manager change, or a profile is stale from a failed manager read.
+- Inventory refreshes in the background. Call `refresh_inventory` only when the user requests current data or after a known FortiManager change.
 - If `ready: false` with `refresh_in_progress`, wait briefly and repeat the query; do not trigger another refresh.
 - Device `data_error` concerns only that refresh's named reads; retained data has its own `data_as_of` and does not make the profile stale.
 - `unavailable_devices` indicates unavailable live access, not stale manager inventory; stored manager data remains usable evidence.
@@ -44,7 +44,7 @@ Inspect all candidates, outcomes, warnings, errors, coverage, and omissions. A s
 
 ## 3. Traffic investigation
 
-When source, destination, and port are known, start with `investigate_traffic`; include explicit scope, source port when known, and `url` for websites. Inspect `hops` for every hop/address: top-level `policy` and `web_filter` cover only the first hop. The wrapper uses the original tuple downstream. Verify upstream NAT through sessions/logs and repeat affected lookups with the translated tuple.
+When source, destination, and port are known, start with `investigate_traffic`; include explicit scope, source port when known, and `url` for websites. Use `detail: compact` when duplicate/raw details are unnecessary; omitted `detail` retains the full view. Inspect `hops` for every hop/address; top-level `policy` and `web_filter` in the full view cover only the first hop. The wrapper uses the original tuple downstream. Verify upstream NAT through sessions/logs and repeat affected lookups with the translated tuple.
 
 Configured paths establish neither live delivery nor return behavior. For incidents, search logs early once scope/time are usable (§5). For websites, apply §4. Use the following loop to resolve missing or uncertain hop evidence.
 
@@ -117,8 +117,9 @@ Correlate device/VDOM, time, interfaces, original/translated tuple, action, and 
 Track effective scope/filters, time range as sent, task ID, progress, timeout, and returned/total coverage:
 
 - Search execution completes only at 100%; pagination completeness is separate. A full page may omit further matches.
-- `task_id` resumes unfinished searches or pages a task whose submitted limit exceeded one page.
-- If a page fills the submitted limit, submit a new search without `task_id` at the next offset, or resubmit with a larger limit (maximum 500) and then page that task.
+- Execute `next_action.arguments` with its named tool to poll the same partial page, page a known task, or start a new search after its match budget ends. The arguments preserve the original absolute window, filter and device; separate searches need not share a snapshot.
+- An error may retain typed log evidence with `isError: true`; inspect `error_details`. Recover unknown task scope or correct persistent permissions before retrying.
+- A size overflow is an explicit error with representation omissions. Recover the same unseen offset with a smaller page; appliance completion does not mean omitted records were delivered.
 - `count_fortianalyzer_logs` counts before returning rows. Finished zero-row searches include log receipt when analyzer `/logstats` responds; `get_log_receipt` reads receipt directly.
 
 Empty results mean only that no matching records were retrieved under those conditions. Partial/timed-out searches support only returned evidence. Check scope, filters, completion, retention, and logging availability before interpreting absence. Missing logs cannot prove traffic never occurred or never reached a downstream hop.

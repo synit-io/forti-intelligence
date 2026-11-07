@@ -3,8 +3,6 @@ package mcpserver
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -20,7 +18,7 @@ import (
 const (
 	ServerName = "forti-intelligence"
 	// serverInstructions is the standing guidance sent with every session.
-	serverInstructions           = `Use this server for read-only Fortinet troubleshooting. For each service-desk question, first restate the symptom in plain language and collect the minimum available context: source, destination, port/protocol, time and timezone for observed failures, direction, and known site/device. Resolve profile, ADOM, FortiGate, VDOM, interface, and package before interpreting policy; never silently choose an ambiguous scope. Prefer investigate_traffic when source, destination, and port are known; otherwise lookup_firewall_policy, and combine it with search_fortianalyzer_logs for observed failures. Separate inventory, live policy lookup, configured policy, and FortiAnalyzer log evidence. Explain Fortinet terms briefly while preserving technical identifiers. Report confidence as confirmed, likely, tentative, or inconclusive, include warnings and exact search/inventory scope, and finish with a next action or human Fortinet administrator escalation. Never claim that this server changed appliance state; no tool performs configuration changes.`
+	serverInstructions           = `Use this server for read-only Fortinet troubleshooting. For each service-desk question, first restate the symptom in plain language and collect the minimum available context: source, destination, port/protocol, time and timezone for observed failures, direction, and known site/device. Resolve profile, ADOM, FortiGate, VDOM, interface, and package before interpreting policy; never silently choose an ambiguous scope. Prefer investigate_traffic when source, destination, and port are known; otherwise use resolve_ip_ownership and resolve_route for available addresses, then obtain the missing source/destination/port before policy lookup. Add search_fortianalyzer_logs for observed failures once analyzer scope and time are usable. Separate inventory, live policy lookup, configured policy, and FortiAnalyzer log evidence. Explain Fortinet terms briefly while preserving technical identifiers. Report confidence as confirmed, likely, tentative, or inconclusive, include warnings and exact search/inventory scope, and finish with a next action or human Fortinet administrator escalation. Never claim that this server changed appliance state; no tool performs configuration changes.`
 	routeTraceGuidance           = "Read path.end before interpreting path.last_managed_device: the last traced FortiGate may be a stopping point. Identify filtering from the carrying policies at every supported hop. Keep ambiguous scopes and alternative destination addresses separate. Configured routing does not prove delivery, policy permission, NAT translations or return-path symmetry."
 	trafficReportingInstructions = "Write plain, complete sentences. Report the conclusion and confidence first, then the flow tuple and a numbered path. For each hop, name profile, ADOM, device, VDOM, ingress and egress, policy/action, and the evidence type and freshness. Explain where traffic stops, which hops remain uncertain, and any observed address or port translation. Report return-path evidence or its absence, then the smallest useful next check. In investigate_traffic, read hops for every traced hop and destination; top-level policy and web_filter cover only the first hop."
 )
@@ -127,6 +125,7 @@ type toolStat struct {
 	ok, failed       int64
 	duration, lane   time.Duration
 	fortinetRequests int64
+	results          map[resultKey]*resultStat
 }
 
 func (s *Server) recordTool(name, outcome string, duration, lane time.Duration, requests int64) {
@@ -157,18 +156,11 @@ func (s *Server) RunStdio(ctx context.Context) error {
 // result encodes the value once as compact JSON text. Returning it again as
 // the typed output would make the SDK marshal it a second time and send both
 // copies on the wire; MCP clients read the text block. A result above
-// maxBytes is replaced by an error that says how to narrow the request.
+// maxBytes is replaced by an explicit error with bounded recovery metadata
+// where supported.
 func result(tool string, value any, maxBytes int) (*mcp.CallToolResult, any, error) {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return nil, nil, fmt.Errorf("encode tool result: %w", err)
-	}
-	if maxBytes > 0 && len(encoded) > maxBytes {
-		return nil, nil, fmt.Errorf("the %s result is %d KB, above the server limit of %d KB (max_result_bytes), and was not returned. %s", tool, len(encoded)>>10, maxBytes>>10, narrowingAdvice(tool))
-	}
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: string(encoded)}},
-	}, nil, nil
+	response, _, err := encodeResult(tool, value, maxBytes)
+	return response, nil, err
 }
 
 // narrowingAdvice says how to make a tool's result smaller.
@@ -185,7 +177,9 @@ func narrowingAdvice(tool string) string {
 	case "get_fortimanager_status", "get_fortianalyzer_data":
 		return "Add fields, filter or range to data, or read a single object path."
 	case "search_fortianalyzer_logs":
-		return "Narrow the filter or time range. A full page that filled the submit limit needs a new search without task_id at the next offset, or one submit with a larger limit (up to 500) that is then paged with task_id."
+		return "Use next_action with a smaller limit at the SAME offset for omitted records. If essential scope exceeds the cap, narrow the original filter/time range; recover unknown task scope first."
+	case "investigate_traffic":
+		return "Request detail=compact, scope device/vdom and one destination address, omit include_logs, or use focused ownership, routing and policy tools."
 	case "get_firewall_sessions":
 		return "Pass source_ip, destination_ip, policy_id, or a smaller count."
 	case "count_fortianalyzer_logs":

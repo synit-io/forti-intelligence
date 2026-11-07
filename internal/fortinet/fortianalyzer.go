@@ -189,16 +189,16 @@ func (c *FortiAnalyzer) SearchLogs(ctx context.Context, request LogSearchRequest
 
 	if request.TaskID != "" {
 		submitted, known := c.submittedSearch(request.TaskID)
+		// Task IDs can collide across ADOMs. Never borrow another ADOM's
+		// saved query to manufacture continuation arguments.
+		known = known && request.ADOM == submitted.request.ADOM
 		filter := request.Filter
 		if known {
 			// Report the search as it was submitted; the caller usually passes
 			// only task_id and offset when continuing.
-			if request.LogType == "" {
-				request.LogType = submitted.request.LogType
-			}
-			if request.Device == "" {
-				request.Device = submitted.request.Device
-			}
+			request.LogType = submitted.request.LogType
+			request.Device = submitted.request.Device
+			request.Filter = submitted.request.Filter
 			request.StartTime, request.EndTime = submitted.request.StartTime, submitted.request.EndTime
 			filter = submitted.filter
 		} else {
@@ -214,6 +214,7 @@ func (c *FortiAnalyzer) SearchLogs(ctx context.Context, request LogSearchRequest
 		result, timedOut, err := c.pollLogSearch(ctx, request.ADOM, request.TaskID, request.Limit, request.Offset)
 		searchResult := logSearchResult(c.Name(), request, filter, request.TaskID, request.Offset, matchBudget, result, timedOut, warnings)
 		searchResult.Resumed = true
+		setLogContinuation(&searchResult, request, submitted.request.Offset, matchBudget, known)
 		if known {
 			searchResult.TimeRangeSent = submitted.timeRangeSent
 			searchResult.ApplianceTimezone = submitted.applianceZone
@@ -302,6 +303,7 @@ func (c *FortiAnalyzer) SearchLogs(ctx context.Context, request LogSearchRequest
 		result, timedOut, err := c.pollLogSearch(ctx, request.ADOM, taskID, request.Limit, request.Offset)
 		searchResult := logSearchResult(c.Name(), request, effectiveFilter, taskID, request.Offset, previous.request.Limit, result, timedOut, warnings)
 		searchResult.Resumed = true
+		setLogContinuation(&searchResult, request, previous.request.Offset, previous.request.Limit, true)
 		searchResult.ApplianceTimezone = previous.applianceZone
 		searchResult.TimeRangeSent = previous.timeRangeSent
 		if err != nil {
@@ -458,7 +460,50 @@ func logSearchResult(profile string, request LogSearchRequest, filter, taskID st
 			searchResult.Hint = fmt.Sprintf("This page filled the search budget (%d records). More records may match. Submit a new search without task_id and offset=%d, or submit once with a larger limit (up to %d) and page that task with task_id.", count, next, maxLogSearchLimit)
 		}
 	}
+	setLogContinuation(&searchResult, request, request.Offset, matchBudget, true)
 	return searchResult
+}
+
+// setLogContinuation keeps absolute offsets separate from the submitted match
+// budget and retains the original filter, rather than combining Device twice.
+func setLogContinuation(result *LogSearchResult, request LogSearchRequest, submitOffset, budget int, known bool) {
+	result.NextAction = nil
+	if !known {
+		result.RecoveryAction = &LogNextAction{Kind: "recover_scope", Reason: "Original task scope and absolute time bounds are unknown or expired. Recover the original query before starting a new search."}
+		result.NextAction = result.RecoveryAction
+		result.Hint = result.RecoveryAction.Reason
+		return
+	}
+	args := LogSearchArguments{Profile: result.Profile, ADOM: result.ADOM, LogType: request.LogType, Filter: request.Filter, Device: request.Device, Start: formatLogBound(request.StartTime), End: formatLogBound(request.EndTime), Limit: request.Limit, Offset: request.Offset}
+	if id, ok := result.TaskID.(string); ok {
+		args.TaskID = id
+	}
+	recovery := args
+	result.RecoveryAction = &LogNextAction{Kind: "smaller_page", Tool: "search_fortianalyzer_logs", Arguments: &recovery, Reason: "Refetch the same offset with a smaller limit; no omitted records have been delivered."}
+	if !result.Complete && args.TaskID != "" {
+		result.NextAction = &LogNextAction{Kind: "poll", Tool: "search_fortianalyzer_logs", Arguments: &args}
+		result.Hint = fmt.Sprintf("The search is still running. Follow next_action with task_id=%q at the same offset; partial records do not prove absence.", args.TaskID)
+	} else if result.Complete && result.Count >= request.Limit {
+		args.Offset += result.Count
+		if args.TaskID != "" && args.Offset < submitOffset+budget {
+			args.Limit = min(args.Limit, submitOffset+budget-args.Offset)
+			result.NextAction = &LogNextAction{Kind: "page", Tool: "search_fortianalyzer_logs", Arguments: &args}
+			result.Hint = fmt.Sprintf("This page is full. Follow next_action to fetch this task at offset %d within its original match budget.", args.Offset)
+		} else {
+			args.TaskID = ""
+			result.NextAction = &LogNextAction{Kind: "new_search", Tool: "search_fortianalyzer_logs", Arguments: &args, Reason: "The match budget is exhausted. Separate searches are not guaranteed to share a snapshot."}
+			result.Hint = fmt.Sprintf("This page filled the match budget. Follow next_action to start a separate search without task_id at offset=%d with the original absolute window; it need not share a snapshot.", args.Offset)
+		}
+	} else if result.Complete && result.Count == 0 && request.Offset > 0 {
+		result.Hint = fmt.Sprintf("No records were retrieved at offset %d. This completed page is empty; it does not prove absence beyond the original match budget starting at %d with limit %d.", request.Offset, submitOffset, budget)
+	}
+}
+
+func formatLogBound(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Format(time.RFC3339Nano)
 }
 
 func timezoneLabel(value time.Time) string {

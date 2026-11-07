@@ -48,8 +48,8 @@ type DeviceGroup struct {
 }
 
 type PolicyPackage struct {
-	Name    string          `json:"name"`
-	Type    string          `json:"type,omitempty"`
+	Name string `json:"name"`
+	Type string `json:"type,omitempty"`
 	// OID is FortiManager's package object id. It changes when the package
 	// changes, so caches can keep a policy table until this value changes.
 	OID     int64           `json:"oid,omitempty"`
@@ -346,6 +346,28 @@ type LogSearchRequest struct {
 	TaskID string
 }
 
+// LogSearchArguments are directly usable arguments for search_fortianalyzer_logs.
+// Filter is the original caller filter, before Device is added by the client.
+type LogSearchArguments struct {
+	Profile string `json:"profile"`
+	ADOM    string `json:"adom"`
+	LogType string `json:"log_type,omitempty"`
+	Filter  string `json:"filter,omitempty"`
+	Device  string `json:"device,omitempty"`
+	Start   string `json:"start,omitempty"`
+	End     string `json:"end,omitempty"`
+	Limit   int    `json:"limit"`
+	Offset  int    `json:"offset"`
+	TaskID  string `json:"task_id,omitempty"`
+}
+
+type LogNextAction struct {
+	Kind      string              `json:"kind"`
+	Tool      string              `json:"tool,omitempty"`
+	Arguments *LogSearchArguments `json:"arguments,omitempty"`
+	Reason    string              `json:"reason,omitempty"`
+}
+
 type LogSearchResult struct {
 	Profile    string    `json:"profile"`
 	ADOM       string    `json:"adom"`
@@ -373,8 +395,13 @@ type LogSearchResult struct {
 	// LogReceipt is the FortiAnalyzer logstats read attached to a finished
 	// search that returned no rows, so a zero count can be compared with
 	// when the device last sent logs.
-	LogReceipt any `json:"log_receipt,omitempty"`
-	Records    any `json:"records,omitempty"`
+	LogReceipt   any            `json:"log_receipt,omitempty"`
+	Records      any            `json:"records,omitempty"`
+	NextAction   *LogNextAction `json:"next_action,omitempty"`
+	ErrorDetails *ErrorInfo     `json:"error_details,omitempty"`
+	// RecoveryAction refetches this page without skipping records. It is used
+	// only by the representation-size fallback, not advertised on normal pages.
+	RecoveryAction *LogNextAction `json:"-"`
 }
 
 type Manager interface {

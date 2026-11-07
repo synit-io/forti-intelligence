@@ -1197,6 +1197,28 @@ func (s *Service) SearchLogs(ctx context.Context, profile string, request fortin
 	defer cancel()
 	result, err := analyzer.SearchLogs(ctx, request)
 	if err != nil {
+		if logResultUsable(result) {
+			details := fortinet.DescribeError(err)
+			result.ErrorDetails = &details
+			switch details.Kind {
+			case fortinet.ErrorKindPermission, fortinet.ErrorKindAuth, fortinet.ErrorKindInvalid:
+				result.NextAction = &fortinet.LogNextAction{Kind: "correct_request", Reason: "Correct scope, input or appliance permissions before retrying. " + details.Hint}
+				result.RecoveryAction = result.NextAction
+			case fortinet.ErrorKindNotFound:
+				if result.RecoveryAction != nil && result.RecoveryAction.Arguments != nil {
+					args := *result.RecoveryAction.Arguments
+					args.TaskID = ""
+					result.NextAction = &fortinet.LogNextAction{Kind: "new_search", Tool: "search_fortianalyzer_logs", Arguments: &args, Reason: "The task is unavailable; repeat the original absolute window. Separate searches need not share a snapshot."}
+					result.RecoveryAction = result.NextAction
+				}
+			}
+			if result.NextAction != nil {
+				result.Hint = result.NextAction.Reason
+				if result.Hint == "" {
+					result.Hint = "The page fetch failed; inspect error_details and follow next_action without assuming missing records are absent."
+				}
+			}
+		}
 		return result, err
 	}
 	if result.Complete && !result.TimedOut && result.Count == 0 && result.Offset == 0 && result.ADOM != "" {

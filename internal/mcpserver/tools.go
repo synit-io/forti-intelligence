@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/synit-io/forti-intelligence/internal/fortinet"
 	"github.com/synit-io/forti-intelligence/internal/inventory"
@@ -22,6 +23,7 @@ type inventoryInput struct {
 }
 
 type investigateToolInput struct {
+	Detail          string `json:"detail,omitempty" jsonschema:"full (default) retains all existing fields; compact omits duplicate evidence and raw live lookup payloads, preserving scope and uncertainty"`
 	SourceIP        string `json:"source_ip" jsonschema:"Source IPv4 or IPv6 address of the flow"`
 	DestinationIP   string `json:"destination_ip" jsonschema:"Destination IP address or hostname"`
 	DestinationPort int    `json:"destination_port,omitempty" jsonschema:"Destination port. When set, the firewall policy lookup runs; when omitted, that step is skipped."`
@@ -31,7 +33,7 @@ type investigateToolInput struct {
 	Profile         string `json:"profile,omitempty" jsonschema:"FortiManager profile name. All inventoried profiles are searched when omitted."`
 	ADOM            string `json:"adom,omitempty" jsonschema:"Limit candidates to one ADOM"`
 	Device          string `json:"device,omitempty" jsonschema:"Limit candidates to one managed FortiGate"`
-	VDOM            string `json:"vdom,omitempty" jsonschema:"Limit web filter results to this VDOM"`
+	VDOM            string `json:"vdom,omitempty" jsonschema:"Limit ownership, routing, policy and web-filter scope to this VDOM"`
 	URL             string `json:"url,omitempty" jsonschema:"When set, rate this URL and check web filter profiles for it"`
 	IncludeLogs     bool   `json:"include_logs,omitempty" jsonschema:"Also submit a FortiAnalyzer traffic log search for this flow"`
 	LogProfile      string `json:"log_profile,omitempty" jsonschema:"FortiAnalyzer profile for include_logs. The default FortiAnalyzer profile is used when omitted."`
@@ -56,7 +58,7 @@ type settingsInput struct {
 	ADOM     string `json:"adom,omitempty" jsonschema:"ADOM that manages the FortiGate; taken from the inventory when omitted"`
 	Device   string `json:"device" jsonschema:"Managed FortiGate name; the read is proxied live to this device"`
 	VDOM     string `json:"vdom,omitempty" jsonschema:"VDOM for the FortiOS request; root when omitted"`
-	Resource string `json:"resource" jsonschema:"FortiOS REST path starting with /api/v2/monitor/ or /api/v2/cmdb/, query string allowed, for example /api/v2/monitor/router/ipv4?vdom=root or /api/v2/cmdb/system/interface. Aliases: routing-table, routing-table6, sdwan-health, sessions, interfaces."`
+	Resource string `json:"resource" jsonschema:"FortiOS REST path starting with /api/v2/monitor/ or /api/v2/cmdb/, query string allowed, for example /api/v2/monitor/router/ipv4?vdom=root or /api/v2/cmdb/system/interface. Aliases: routing-table, routing-table6, sdwan-health, sessions, interfaces, ha-peer, ha-checksums, ipsec, ssl-vpn, bgp-neighbors, ospf-neighbors, sdwan-sla, license."`
 }
 
 type managerReadInput struct {
@@ -100,7 +102,7 @@ type logSearchInput struct {
 	Start   string `json:"start,omitempty" jsonschema:"Range start as RFC3339 with explicit offset, for example 2026-09-22T14:00:00+02:00; one hour ago when omitted"`
 	End     string `json:"end,omitempty" jsonschema:"Range end as RFC3339 with explicit offset; now when omitted"`
 	Device  string `json:"device,omitempty" jsonschema:"Logged device name (devname) to filter on; all devices when omitted"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"Match budget of the submit, 1-500, default 25. FortiAnalyzer stops collecting once it has this many matches. A later page of the same task exists only when this budget is larger than the page."`
+	Limit   int    `json:"limit,omitempty" jsonschema:"Match budget of the submit; omitted, zero or negative defaults to 25; above 500 clamps to 500. FortiAnalyzer stops collecting once it has this many matches. A later page of the same task exists only when this budget is larger than the page."`
 	Offset  int    `json:"offset,omitempty" jsonschema:"Record offset. On a new search this is where collection starts. With task_id it pages inside the budget of the original submit."`
 	TaskID  string `json:"task_id,omitempty" jsonschema:"Task ID of a search that has not reached 100%, or of a submit whose limit is larger than one page. A full page that used up the submit limit needs a new search without task_id at the next offset. Keep profile and adom the same."`
 }
@@ -115,7 +117,12 @@ type analyzerReadInput struct {
 // with structured Fortinet details and whose panics are converted into tool
 // errors, so one faulty request never takes the server down.
 func addReadTool[In any](s *Server, name, title, description string, run func(context.Context, In) (any, error)) {
-	mcp.AddTool(s.mcp, &mcp.Tool{Name: name, Title: title, Description: description, Annotations: readonlyAnnotations(title)},
+	schema, schemaErr := jsonschema.For[In](nil)
+	if schemaErr != nil {
+		panic(schemaErr)
+	}
+	constrainToolSchema(name, schema)
+	mcp.AddTool(s.mcp, &mcp.Tool{Name: name, Title: title, Description: description, Annotations: readonlyAnnotations(title), InputSchema: schema},
 		func(ctx context.Context, req *mcp.CallToolRequest, input In) (response *mcp.CallToolResult, output any, err error) {
 			// Apply request timeout to the tool context to prevent unbounded execution
 			toolCtx, timeoutCancel := context.WithTimeout(ctx, s.config.RequestTimeoutDuration())
@@ -128,7 +135,7 @@ func addReadTool[In any](s *Server, name, title, description string, run func(co
 			started := time.Now()
 			defer func() {
 				outcome := "ok"
-				if err != nil {
+				if err != nil || (response != nil && response.IsError) {
 					outcome = "error"
 				}
 				requests := stats.Snapshot()
@@ -150,9 +157,19 @@ func addReadTool[In any](s *Server, name, title, description string, run func(co
 			}()
 			value, runErr := run(toolCtx, input)
 			if runErr != nil {
-				return s.toolError(req, name, runErr)
+				logs, usable := value.(fortinet.LogSearchResult)
+				if name != "search_fortianalyzer_logs" || !usable || !service.LogResultUsable(logs) {
+					return s.toolError(req, name, runErr)
+				}
+				// Return a constructed error result with a nil Go error: the SDK
+				// otherwise replaces it with a plain error and loses task state.
+				s.toolError(req, name, runErr)
+				value = logs
 			}
-			response, output, err = result(name, value, s.config.MaxResultBytes)
+			response, output, err = s.encodeResult(name, value)
+			if response != nil && runErr != nil {
+				response.IsError = true
+			}
 			if err != nil {
 				return s.toolError(req, name, err)
 			}
@@ -162,7 +179,7 @@ func addReadTool[In any](s *Server, name, title, description string, run func(co
 
 func (s *Server) registerTools() {
 	addReadTool(s, "investigate_traffic", "Investigate a traffic flow",
-		"Investigate connected ownership, configured routing with follow, and scoped policy decisions at every traced hop and destination address. Pass url to rate it once and check web filtering at each managed hop. Read hops for all policy and web-filter evidence; top-level policy and web_filter retain only the first hop. Upstream NAT and the return path remain unverified. include_logs adds a FortiAnalyzer traffic search and returns whatever finished before the deadline; resume timed-out searches with task_id. Failed steps remain in errors. Scope with profile, adom, device and vdom when known. "+routeTraceGuidance,
+		"Investigate ownership, configured paths, policy decisions and optional URL filtering at every traced hop and destination. Requires source_ip and destination_ip; destination_port enables policy lookup. Scope profile/adom/device/vdom when known. Read hops for policy/web-filter evidence; only full retains duplicate first-hop fields. detail=compact removes duplicates and raw live payloads, preserving uncertainty. Failed/skipped stages remain in errors/warnings. include_logs retains partial task state and next_action. Upstream NAT and return paths are unverified. "+routeTraceGuidance,
 		func(ctx context.Context, input investigateToolInput) (any, error) {
 			start, err := parseTime(input.LogStart)
 			if err != nil {
@@ -172,13 +189,21 @@ func (s *Server) registerTools() {
 			if err != nil {
 				return nil, err
 			}
-			return s.app.Investigate(ctx, service.InvestigateInput{
+			if input.Detail != "" && input.Detail != "full" && input.Detail != "compact" {
+				return nil, fmt.Errorf("detail must be full or compact")
+			}
+			serviceInput := service.InvestigateInput{
 				SourceIP: input.SourceIP, DestinationIP: input.DestinationIP, DestinationPort: input.DestinationPort,
 				Protocol: input.Protocol, SourcePort: input.SourcePort, SourceInterface: input.SourceInterface,
 				Profile: input.Profile, ADOM: input.ADOM, Device: input.Device, VDOM: input.VDOM, URL: input.URL,
 				IncludeLogs: input.IncludeLogs, LogProfile: input.LogProfile, LogADOM: input.LogADOM,
 				LogStart: start, LogEnd: end,
-			})
+			}
+			full, err := s.app.Investigate(ctx, serviceInput)
+			if err == nil && input.Detail == "compact" {
+				return service.CompactInvestigate(serviceInput, full), nil
+			}
+			return full, err
 		})
 	addReadTool(s, "resolve_ip_ownership", "Resolve connected IP ownership",
 		"First read for IP ownership: query the in-memory inventory prefix index without appliance calls or raw interface payloads. Supply ip and optional profile/adom/device/vdom filters. Returns all matching connected-network candidates, most-specific first, with scoped interface, zone, package targets, status, timestamp, profile freshness and refresh errors. Overlaps remain ambiguous; no match does not prove absence. Does not establish routing, actual ingress/egress, endpoint ownership or policy permission. ready=false with refresh_in_progress means the background inventory is still loading: retry shortly. Offline FortiGates are listed under unavailable_devices and still contribute their FortiManager data; they are not a reason to refresh.",
@@ -186,7 +211,7 @@ func (s *Server) registerTools() {
 			return s.app.ResolveIPOwnership(ctx, input)
 		})
 	addReadTool(s, "resolve_route", "Resolve configured routing for a destination",
-		"Resolve configured forwarding from the FortiManager database: policy routes in order, then SD-WAN rules, then connected/static routes by longest prefix, lowest distance and lowest priority. Returns stage, confidence, egress interfaces/zones, gateways and their exact inventoried interface owners, plus policy-route or SD-WAN evidence. ip may be a hostname; each evaluated address has its own result. Give source_ip, source_interface, protocol, destination_port and source_port when known. follow=true traces ordered managed hops and stops at ambiguity or tentative decisions. Dynamic routes and live SD-WAN health require get_fortigate_settings when they can change the answer. "+routeTraceGuidance,
+		"Resolve configured forwarding from FortiManager: ordered policy routes, SD-WAN rules, then connected/static routes by prefix, distance and priority. Give source/ingress and protocol/ports when known; missing conditions remain tentative. Hostname addresses remain separate. follow=true traces managed hops, stopping at ambiguity. Returns scoped decisions, egress/gateways and inventoried next-hop owners. Dynamic routing and live SD-WAN health require get_fortigate_settings. "+routeTraceGuidance,
 		func(ctx context.Context, input service.RouteLookupInput) (any, error) {
 			return s.app.ResolveRoute(ctx, input)
 		})
@@ -206,7 +231,7 @@ func (s *Server) registerTools() {
 			return s.app.GetInterfaces(ctx, input.Profile, input.ADOM, input.Device, input.VDOM, input.IncludeRaw, input.Fresh)
 		})
 	addReadTool(s, "get_fortigate_settings", "Get FortiGate settings",
-		"Read a FortiOS 7.x REST monitor or CMDB resource live from a managed FortiGate through the FortiManager /sys/proxy/json tunnel. Only GET-style /api/v2/monitor/* and /api/v2/cmdb/* resources are accepted. Aliases: routing-table (/api/v2/monitor/router/ipv4), routing-table6 (/api/v2/monitor/router/ipv6), sdwan-health (/api/v2/monitor/virtual-wan/health-check), sessions (/api/v2/monitor/firewall/session), interfaces (/api/v2/monitor/system/interface), ha-peer, ha-checksums, ipsec, ssl-vpn, bgp-neighbors, ospf-neighbors, sdwan-sla, license. Stable monitor reads are reused for 30 seconds; the session table is not cached. FortiManager waits for the FortiGate at most until shortly before the request deadline, so a silent FortiGate answers with a timeout. adom is taken from the inventory when omitted. Prefer resolve_route for configured routing, get_firewall_sessions for a filtered session, and get_vpn_status, get_ha_status or get_routing_neighbors for those short answers.",
+		"Read one live FortiGate FortiOS 7.x monitor or CMDB resource through FortiManager GET proxy. Requires device and an accepted /api/v2/monitor/* or /api/v2/cmdb/* resource; field descriptions list common aliases. Infer ADOM from inventory when omitted. Stable monitor reads cache for 30 seconds; sessions do not. A silent appliance times out before the request deadline. Prefer resolve_route for configured routes and get_firewall_sessions, get_vpn_status, get_ha_status or get_routing_neighbors for focused operational evidence.",
 		func(ctx context.Context, input settingsInput) (any, error) {
 			return s.app.GetFortiManagerSettings(ctx, input.Profile, input.ADOM, input.Device, input.VDOM, input.Resource)
 		})
@@ -232,7 +257,7 @@ func (s *Server) registerTools() {
 			})
 		})
 	addReadTool(s, "lookup_firewall_policy", "Lookup firewall policy across ADOMs",
-		"Find which FortiGate firewall policy handles a flow, across inventoried FortiManager ADOMs. Give source_ip, destination_ip (literal IP or FQDN), and destination_port; profile, adom, device, vdom, source_port, protocol, and source_interface are optional. FQDNs are resolved with system DNS, including CNAME targets, and each matching A/AAAA address is evaluated. The server derives candidate FortiGates and ingress interfaces from inventory and the egress interface from configured policy routes, SD-WAN rules and the routing table (see routing on each candidate), evaluates the FortiManager policy packages in FortiOS order (IPv4/IPv6 addresses per family, VIPs against their mapped address, services, install-on scope) and reports per profile, ADOM, device, VDOM, package and destination the configured verdict under decisions: the first matching policy, or implicit_deny when none matches and every read succeeded. matches lists all matching policies in evaluation order (first_match marks the verdict); conditions it cannot evaluate (internet services, users, per-device mappings, schedules) make a match tentative. Custom services honor destination and source-port ranges; an omitted constrained source port remains tentative. Afterwards it asks the FortiGates' live policy-lookup (at most 4 per call, each bounded to 10 s) and compares within that exact scope; several package verdicts produce ambiguous_configured_verdict. complete=false means a read failed, so a missing match proves nothing.",
+		"Find the configured first-match verdict for a flow. Requires source_ip, destination_ip and destination_port. Scope profile/adom/device/vdom and known source port/ingress; omitted scope searches inventoried candidates. DNS alternatives are evaluated separately. decisions identifies each device/VDOM/package/destination verdict; matches retains evaluation order. Unknown identity, schedules, mappings or constrained source ports make matches tentative. VIP matching uses mapped addresses; this does not resolve downstream NAT or the return path. Live FortiGate lookup (at most four, each up to 10 s) is compared only in the same scope. ambiguous_configured_verdict requires checking installed package state. complete=false means a read failed: missing matches prove nothing; implicit_deny requires all reads to succeed.",
 		func(ctx context.Context, input service.PolicyLookupInput) (any, error) {
 			return s.app.LookupPolicies(ctx, input)
 		})
@@ -248,7 +273,7 @@ func (s *Server) registerTools() {
 			return s.app.RateURL(ctx, input)
 		})
 	addReadTool(s, "check_web_filter", "Where a web category is blocked or allowed",
-		"Explain how each web filter profile treats a FortiGuard category (from rate_url) and where the profiles are enforced. Pass url as well for a concrete site: static URL filter entries (simple/wildcard/regex, block/allow/exempt/monitor) and FortiGuard local rating overrides match the URL, not its category. Category actions: block, monitor, warning, authenticate; a missing entry means allow; category groups are expanded. Each profile is mapped to the enabled firewall, IPv6, NGFW security and explicit proxy policies, packages and device VDOMs that apply it, with FortiManager's stored package and config status. Pass device to read only that FortiGate's packages, and policy_id (the policy that carries the user's traffic, from lookup_firewall_policy) to evaluate only the profile that policy applies. Reads FortiManager configuration only and answers within the request timeout; complete=false means some reads were still running, so repeat the check shortly (served from cache). Live enforcement is not tested.",
+		"Explain configured URL/category filtering and where profiles apply. Use rate_url for category; pass url for concrete sites so static URL entries and local overrides are included. Scope device and carrying policy_id from lookup_firewall_policy when known. Returns profile decisions, enabled firewall/IPv6/security/proxy policy references, device/VDOM targets and stored package status. A missing category entry allows that category; URL block/allow/exempt/monitor and local overrides can change the result. Reads FortiManager configuration, not live enforcement. complete=false preserves partial reads: repeat shortly for cached progress; missing profiles are not proof of absence.",
 		func(ctx context.Context, input service.CheckWebFilterInput) (any, error) {
 			return s.app.CheckWebFilter(ctx, input)
 		})
@@ -258,7 +283,7 @@ func (s *Server) registerTools() {
 			return s.app.FortiAnalyzerStatus(ctx, input.Profile)
 		})
 	addReadTool(s, "search_fortianalyzer_logs", "Search FortiAnalyzer logs",
-		"Submit an ADOM-scoped FortiAnalyzer Log View search and poll it (0.5 s growing to 2 s) until it finishes or shortly before the request deadline. Use a bounded RFC3339 time window with explicit offset (sent with its UTC offset) and the appliance's filter grammar. device is the FortiAnalyzer devname from map_analyzer_device, not the FortiManager name. Returns profile, ADOM, device/filter scope, the time range as sent to the appliance, task ID, progress, completion and timeout state, records (newest first), total_count (FortiAnalyzer's total-count, which can count scanned rather than matching logs) and a hint. complete is true only at 100 %. A search still running returns timed_out with its task_id: call again with that task_id (same profile and adom) to continue polling. limit on submit is the match budget. When a page fills that budget, submit a new search without task_id at offset equal to the previous offset plus count, or submit once with a larger limit (up to 500) and page that task with task_id. task_id plus a higher offset is the next page only when the original submit asked for more matches than the page. An identical search within 3 minutes reuses the remembered task. A finished search with zero rows attaches log receipt when /logstats answers. Zero records are no retrieved match under that scope, not proof that traffic did not occur.",
+		"Search FortiAnalyzer Log View within a verified analyzer profile/ADOM, logged devname, filter and absolute time window. Device names come from map_analyzer_device. Returns effective scope/time, task/progress, records newest first and next_action with exact suggested arguments. Execute next_action to poll the SAME partial page, page a task, or restart an exhausted match budget; separate searches need not share a snapshot. limit on submit is the match budget, not just page size. complete describes search execution, not all possible matches; total_count can count scanned logs. Partial execution failures retain typed evidence with isError=true; normal unfinished searches are resumable. Unknown task scope or persistent permission failures require correction. Zero rows prove only no retrieved matches in that scope; log receipt is attached when available.",
 		func(ctx context.Context, input logSearchInput) (any, error) {
 			start, err := parseTime(input.Start)
 			if err != nil {
