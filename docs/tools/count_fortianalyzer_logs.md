@@ -1,6 +1,6 @@
 # `count_fortianalyzer_logs`
 
-Get a bounded match count before retrieving log rows, with optional deny, web-filter, or IPS focus.
+Get a bounded match count without returning log rows, with optional deny, web-filter, or IPS focus.
 
 **Evidence and freshness:** FortiAnalyzer Log View search plus `/logview/adom/<adom>/logsearch/count/<task_id>`; rows are omitted.
 
@@ -38,6 +38,8 @@ The identifiers and values below are fictional. Replace them with your verified 
 ## Behavior and limits
 
 `focus` accepts `all` (default), `deny` (traffic with action deny), `webfilter`, or `ips` (attack logs). The additional `filter` is ANDed with the focus filter. Map the logged device name before filtering.
+
+Use this tool when a bounded count answers the question. It uses the normal search/poll path before reading the count resource, so omitting rows from the response does not guarantee less appliance work. Use `search_fortianalyzer_logs` directly when incident records are needed.
 
 `limit` is a match budget, default and maximum 500. FortiAnalyzer can stop collecting at that budget, so this is not an exhaustive count. `total_count` can count scanned lines rather than matching logs.
 

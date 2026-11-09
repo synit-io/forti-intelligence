@@ -21,6 +21,7 @@ Maintain a compact working record:
 - **Scope/ownership:** manager profile, ADOM, device/serial, VDOM/VRF, interfaces/zones, connected networks, and package targets.
 - **Path/flow:** stable hop numbers and branch labels, verified links, incoming/outgoing tuples, translations, and tracing stop reason.
 - **Evidence:** tool/resource, scope, observation/snapshot time, finding, supported claim, and limitations.
+- **Search continuation:** analyzer scope, absolute time window, task ID, current offset, and any pending recovery action.
 - **Open questions:** competing candidates, unverified links, and the next distinguishing read.
 
 Proceed with resolved scope or explicit candidate branches, never a silently selected default.
@@ -42,9 +43,15 @@ Inventory rules:
 
 Inspect all candidates, outcomes, warnings, errors, coverage, and omissions. A successful call may contain failed subqueries. Distinguish empty, denied, unsupported, offline, stale, and incomplete results. Retry transient failures within a small bound; adjust scope/filters only with evidence. Report persistent capability/permission gaps instead of guessing or requesting credentials. Each iteration must yield a finding, a narrower question, or a visibility gap.
 
+Data results are JSON text; execution errors may be plain text or retained JSON evidence. Inspect retained evidence even when MCP sets `isError: true`. For `representation_truncated`, read the available `evidence`, omission counts and recovery hint before retrying. A reduced response may contain only scope/recovery metadata; omitted collections support no absence claim. Narrow scope or request a smaller view instead of repeating an unchanged oversized call.
+
 ## 3. Traffic investigation
 
-When source, destination, and port are known, start with `investigate_traffic`; include explicit scope, source port when known, and `url` for websites. Use `detail: compact` when duplicate/raw details are unnecessary; omitted `detail` retains the full view. Inspect `hops` for every hop/address; top-level `policy` and `web_filter` in the full view cover only the first hop. The wrapper uses the original tuple downstream. Verify upstream NAT through sessions/logs and repeat affected lookups with the translated tuple.
+When source, destination, and port are known, start with `investigate_traffic`; include explicit scope, source port when known, and `url` for websites. With incomplete inputs, use ownership/routing discovery where possible; obtain the required source, destination and destination port before `lookup_firewall_policy`.
+
+Use `detail: compact` when duplicate/raw details are unnecessary; omitted `detail` retains the full view. Inspect `hops` for every hop/address and `route.path.end` for the stopping reason. Compact mode removes duplicate `route.path.hops`, including those under `other_addresses`; a null copy does not mean no path. Top-level policy/web-filter fields duplicate the first hop in full mode; when no scoped hop exists, inspect the fallback top-level policy even in compact mode. Request full detail only when omitted evidence matters.
+
+The wrapper uses the original tuple downstream. Verify upstream NAT through sessions/logs and repeat affected lookups with the translated tuple.
 
 Configured paths establish neither live delivery nor return behavior. For incidents, search logs early once scope/time are usable (§5). For websites, apply §4. Use the following loop to resolve missing or uncertain hop evidence.
 
@@ -116,11 +123,12 @@ Correlate device/VDOM, time, interfaces, original/translated tuple, action, and 
 
 Track effective scope/filters, time range as sent, task ID, progress, timeout, and returned/total coverage:
 
-- Search execution completes only at 100%; pagination completeness is separate. A full page may omit further matches.
-- Execute `next_action.arguments` with its named tool to poll the same partial page, page a known task, or start a new search after its match budget ends. The arguments preserve the original absolute window, filter and device; separate searches need not share a snapshot.
-- An error may retain typed log evidence with `isError: true`; inspect `error_details`. Recover unknown task scope or correct persistent permissions before retrying.
-- A size overflow is an explicit error with representation omissions. Recover the same unseen offset with a smaller page; appliance completion does not mean omitted records were delivered.
-- `count_fortianalyzer_logs` counts before returning rows. Finished zero-row searches include log receipt when analyzer `/logstats` responds; `get_log_receipt` reads receipt directly.
+- Use returned `complete` for search execution: reported progress must reach 100%, but synchronous responses can finish without a progress field. Completion is separate from page coverage and successful retrieval; inspect `error_details` and omissions too.
+- When `next_action` contains a supported `tool` and `arguments`, validate their scope against the investigation and use those exact arguments within the retry bound. `poll` retains the same partial page; `page` advances within the task budget; `new_search` retains the original absolute window/filter/device but may observe a different snapshot.
+- `recover_scope` and `correct_request` have no callable arguments. Recover the original query or resolve the reported input/permission gap before continuing. When no action is returned, inspect coverage and hints rather than inventing a continuation.
+- On overflow, follow the replacement action to recover the same unseen offset with a smaller page. At limit 1, or if essential metadata is omitted, recover the original scope and narrow the query. Appliance completion does not mean omitted records were delivered.
+- Use `count_fortianalyzer_logs` only when a bounded count answers the question; it omits rows but still runs a search. Retrieve incident evidence with `search_fortianalyzer_logs` directly when rows are needed.
+- Finished zero-row searches at offset 0 include log receipt when analyzer `/logstats` responds; `get_log_receipt` reads receipt directly.
 
 Empty results mean only that no matching records were retrieved under those conditions. Partial/timed-out searches support only returned evidence. Check scope, filters, completion, retention, and logging availability before interpreting absence. Missing logs cannot prove traffic never occurred or never reached a downstream hop.
 

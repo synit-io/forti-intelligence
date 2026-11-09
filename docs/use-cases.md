@@ -8,7 +8,7 @@ The server supplies evidence. The assistant resolves scope, selects follow-up re
 
 > Client `10.1.0.10` cannot reach server `10.30.0.20` over TCP/443. The failure occurred at `2026-10-02 10:05 UTC`. Find the blocking firewall and policy, show any address translation, and state what remains unverified.
 
-This example expands the [multi-hop report in SYSTEM.md](../SYSTEM.md#example-multi-hop-report). The client is behind `Branch-FW/root`; `Core-FW/root` is the next managed boundary. In the fictional evidence, the branch translates the source to `172.16.0.1`, and the core denies it with policy 9.
+This example follows the [traffic investigation instructions in SYSTEM.md](../SYSTEM.md#3-traffic-investigation). The client is behind `Branch-FW/root`; `Core-FW/root` is the next managed boundary. In the fictional evidence, the branch translates the source to `172.16.0.1`, and the core denies it with policy 9.
 
 ### Investigation flow
 
@@ -48,7 +48,7 @@ Start with [`investigate_traffic`](tools/investigate_traffic.md). Scope is optio
 }
 ```
 
-Read ownership candidates, inventory freshness, `route.path.end`, and every entry in `hops`. Top-level `policy` and `web_filter` cover only the first hop. The configured route does not prove forwarding, actual NAT, or the return path.
+Read ownership candidates, inventory freshness, `route.path.end`, and every entry in `hops`. Add `detail: "compact"` when duplicate/raw evidence is unnecessary: canonical hops remain in `hops`, while duplicate route-hop arrays are null. In the full view, top-level `policy` and `web_filter` duplicate the first hop when hops exist; with no traced hop, inspect any fallback top-level policy. The configured route does not prove forwarding, actual NAT, or the return path.
 
 For a focused follow-up, use [`resolve_route`](tools/resolve_route.md) with `follow: true` and the source-side scope. Use [`get_routing_neighbors`](tools/get_routing_neighbors.md) and a live [`get_fortigate_settings`](tools/get_fortigate_settings.md) routing read when dynamic routing or SD-WAN can change the configured answer.
 
@@ -81,7 +81,7 @@ Pass this input to [`map_analyzer_device`](tools/map_analyzer_device.md). In thi
 }
 ```
 
-Filter fields must be supported by the analyzer release; discover them with [`get_fortianalyzer_data`](tools/get_fortianalyzer_data.md) if needed. Keep logged VDOM, time, interfaces, policy ID, and tuple in the evidence record. `complete` means task completion only at 100%; a full page can require another search or page. Resume unfinished searches with `task_id` and the same analyzer profile/ADOM. Check [`get_log_receipt`](tools/get_log_receipt.md) and search coverage before interpreting zero rows.
+Filter fields must be supported by the analyzer release; discover them with [`get_fortianalyzer_data`](tools/get_fortianalyzer_data.md) if needed. Keep logged VDOM, time, interfaces, policy ID, and tuple in the evidence record. Use returned `complete` for execution status; synchronous responses can finish without progress. A full page can require another search or page. When `next_action` supplies a supported tool and arguments, validate scope and use those arguments to retain the original absolute window. Actions without callable arguments require scope/input recovery. On overflow, recover the same unseen offset rather than advancing past omitted records. Check [`get_log_receipt`](tools/get_log_receipt.md) and search coverage before interpreting zero rows.
 
 ### 3. Verify translation before downstream checks
 
@@ -182,12 +182,12 @@ An expected answer identifies which hop and profile has a configured or observed
 
 | SYSTEM.md instruction | What these examples demonstrate |
 | --- | --- |
-| [1. Frame the question](../SYSTEM.md#1-frame-the-question) | Separate configuration questions from incidents; collect the flow, time, and DNS context. |
-| [2. Resolve scope](../SYSTEM.md#2-resolve-scope-and-maintain-an-evidence-record) | Keep overlapping ownership candidates separate and map analyzer identity independently. |
-| [3. Select reads](../SYSTEM.md#3-select-reads-that-resolve-uncertainty) | Choose focused tools for the specific routing, translation, policy, or logging gap. |
-| [4. Trace boundaries](../SYSTEM.md#4-trace-traffic-across-every-relevant-boundary) | Inspect every relevant device/VDOM, carry verified translations downstream, and check return-path coverage. |
-| [5. Correlate incidents](../SYSTEM.md#5-correlate-observed-incidents) | Search the correct per-hop tuple and time window; preserve completion, pagination, and ingestion limits. |
-| [6. Reconcile and answer](../SYSTEM.md#6-reconcile-and-answer) | State conclusion/confidence first, then ordered hop findings, evidence, return-path limits, and next action. |
+| [1. Frame and scope](../SYSTEM.md#1-frame-and-scope) | Separate configuration from incidents, collect flow/time/DNS context, and resolve ownership and analyzer identity. |
+| [2. Evidence and freshness](../SYSTEM.md#2-evidence-and-freshness) | Choose focused reads, retain freshness and uncertainty, and interpret partial or oversized results. |
+| [3. Traffic investigation](../SYSTEM.md#3-traffic-investigation) | Inspect every relevant device/VDOM, carry verified translations downstream, and check return-path coverage. |
+| [4. Website and URL filtering](../SYSTEM.md#4-website-and-url-filtering) | Rate once and check URL/category filtering on each scoped carrying policy. |
+| [5. Incident logs](../SYSTEM.md#5-incident-logs) | Search the per-hop tuple and time window; preserve continuation, pagination, and ingestion limits. |
+| [6. Reconcile and report](../SYSTEM.md#6-reconcile-and-report) | State conclusion/confidence first, then ordered hop findings, evidence, return-path limits, and next action. |
 
 Stop when the question has sufficient evidence or supported reads are exhausted. A visibility gap should lead to a scoped next check or administrator escalation, not an unrelated audit.
 

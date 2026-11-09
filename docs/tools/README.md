@@ -49,7 +49,7 @@ Start with the [investigation flow guide](../use-cases.md) for task-oriented exa
 | [`fortianalyzer_status`](fortianalyzer_status.md) | Check a configured FortiAnalyzer connection and its system status before investigating analyzer-specific failures. |
 | [`map_analyzer_device`](map_analyzer_device.md) | Map an inventoried FortiGate to its analyzer identity before filtering logs. |
 | [`search_fortianalyzer_logs`](search_fortianalyzer_logs.md) | Retrieve observed traffic, security, or event evidence in a bounded incident window. |
-| [`count_fortianalyzer_logs`](count_fortianalyzer_logs.md) | Get a bounded match count before retrieving log rows, with optional deny, web-filter, or IPS focus. |
+| [`count_fortianalyzer_logs`](count_fortianalyzer_logs.md) | Get a bounded match count without returning log rows, with optional deny, web-filter, or IPS focus. |
 | [`get_log_receipt`](get_log_receipt.md) | Check whether FortiAnalyzer has recent log-receipt evidence for a device before interpreting an empty search. |
 | [`get_fortianalyzer_data`](get_fortianalyzer_data.md) | Read analyzer device lists, filter fields, existing task state, reports, events, or incidents when a focused tool does not cover the required resource. |
 
