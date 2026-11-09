@@ -4,7 +4,7 @@ Build and connect a self-hosted server to your own Fortinet appliances. For capa
 
 ## Requirements
 
-- Go 1.25 or newer to build locally (latest stable recommended), or Docker to build and run the container
+- Go 1.26.0 or newer to build locally (latest stable recommended), or Docker to build and run the container
 - An MCP client supporting stdio or Streamable HTTP
 - FortiManager 7.4.x or newer with JSON API access enabled for inventory and FortiGate investigations
 - FortiAnalyzer 7.x or newer with JSON API access enabled for analyzer status and log workflows (optional for FortiManager-only use)

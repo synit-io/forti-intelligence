@@ -9,12 +9,14 @@ server:
   refresh_interval: "1h"
   refresh_timeout: "2m"
   request_timeout: "30s"
+  # Bounds inventory work across profiles, not concurrent MCP tool calls.
   max_concurrent_calls: 8
   # After each background inventory refresh, re-read policy tables that a
   # tool already cached so the next lookup matches the new snapshot.
   # prefetch_cached_policies: false
-  # Largest tool result sent to the agent (bytes, default 512 KiB); larger
-  # answers are replaced by an error that says how to narrow the request.
+  # Inner JSON result cap (bytes, default 512 KiB), not a token budget.
+  # Larger answers return an error; logs/investigations retain bounded
+  # recovery metadata where it fits, otherwise narrowing guidance.
   # max_result_bytes: 524288
 
 profiles:
