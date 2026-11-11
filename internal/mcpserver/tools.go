@@ -182,7 +182,7 @@ func addReadTool[In any](s *Server, name, title, description string, run func(co
 
 func (s *Server) registerTools() {
 	addReadTool(s, "investigate_traffic", "Investigate a traffic flow",
-		"Investigate ownership, configured paths, policy decisions and optional URL filtering at every traced hop and destination. Requires source_ip and destination_ip; destination_port enables policy lookup. Scope profile/adom/device/vdom when known. Read hops for policy/web-filter evidence; only full retains duplicate first-hop fields. detail=compact removes duplicates and raw live payloads, preserving uncertainty. Failed/skipped stages remain in errors/warnings. include_logs retains partial task state and next_action. Upstream NAT and return paths are unverified. "+routeTraceGuidance,
+		"Investigate ownership, configured paths, policy and optional URL filtering across hops/destinations. Requires source_ip/destination_ip; destination_port enables policy lookup. Scope profile/adom/device/vdom. Read hops for every supported hop; compact removes duplicates/raw live payloads but retains fallback policy when no hops exist. Inspect errors/warnings and path.end for failed/skipped stages and tracing limits. include_logs retains partial task state/next_action. Keep ambiguous scopes and DNS alternatives separate. Routing alone proves neither delivery nor policy permission; upstream NAT and return-path coverage remain unverified.",
 		func(ctx context.Context, input investigateToolInput) (any, error) {
 			start, err := parseTime(input.LogStart)
 			if err != nil {
@@ -209,42 +209,42 @@ func (s *Server) registerTools() {
 			return full, err
 		})
 	addReadTool(s, "resolve_ip_ownership", "Resolve connected IP ownership",
-		"First read for IP ownership: query the in-memory inventory prefix index without appliance calls or raw interface payloads. Supply ip and optional profile/adom/device/vdom filters. Returns all matching connected-network candidates, most-specific first, with scoped interface, zone, package targets, status, timestamp, profile freshness and refresh errors. Overlaps remain ambiguous; no match does not prove absence. Does not establish routing, actual ingress/egress, endpoint ownership or policy permission. ready=false with refresh_in_progress means the background inventory is still loading: retry shortly. Offline FortiGates are listed under unavailable_devices and still contribute their FortiManager data; they are not a reason to refresh.",
+		"Find connected-network candidates for ip in cached inventory, most-specific first; no appliance calls. Filter profile/adom/device/vdom. Returns scoped interfaces, zones, packages, status, timestamps and freshness/errors. Overlaps stay ambiguous; no match does not prove absence. Establishes neither endpoint ownership, routing, ingress/egress nor policy permission. ready=false with refresh_in_progress: retry shortly. Offline devices retain manager data under unavailable_devices; do not refresh solely for them.",
 		func(ctx context.Context, input inventory.OwnershipQuery) (any, error) {
 			return s.app.ResolveIPOwnership(ctx, input)
 		})
 	addReadTool(s, "resolve_route", "Resolve configured routing for a destination",
-		"Resolve configured forwarding from FortiManager: ordered policy routes, SD-WAN rules, then connected/static routes by prefix, distance and priority. Give source/ingress and protocol/ports when known; missing conditions remain tentative. Hostname addresses remain separate. follow=true traces managed hops, stopping at ambiguity. Returns scoped decisions, egress/gateways and inventoried next-hop owners. Dynamic routing and live SD-WAN health require get_fortigate_settings. "+routeTraceGuidance,
+		"Resolve configured forwarding: ordered policy routes, SD-WAN rules, then connected/static routes by prefix, distance and priority. Supply known source/ingress/protocol/ports; missing conditions stay tentative. Keep hostname alternatives separate. follow=true traces managed hops until ambiguity; returns scoped decisions, egress/gateways and inventoried next-hop owners. Read path.end before last_managed_device; check carrying policies at every supported hop. Routing proves neither delivery, policy permission, NAT nor return-path symmetry. Use get_fortigate_settings for dynamic routes/live SD-WAN health.",
 		func(ctx context.Context, input service.RouteLookupInput) (any, error) {
 			return s.app.ResolveRoute(ctx, input)
 		})
 	addReadTool(s, "inventory_status", "FortiGate inventory status",
-		"Return the latest background inventory snapshot: ADOMs, managed FortiGates with data_as_of, VDOMs, device-group memberships, policy-package associations, whether a refresh is running, offline FortiGates under unavailable_devices (informational), and refresh errors with kind, appliance code, resource, retry state, and operator hint. A profile is stale only when an ADOM-level FortiManager read failed; offline devices never make it stale, and a device whose own reads failed carries data_error with data retained from data_as_of. Interfaces, routing (static routes, policy routes, SD-WAN) and raw records are omitted unless requested.",
+		"Read the background inventory: ADOMs, devices/data_as_of, VDOMs, groups, packages, refresh state and structured errors. ADOM-level read failures mark profiles stale; offline devices in unavailable_devices do not. Device-level failures carry data_error and retained data_as_of. Interfaces, routes and raw records are opt-in.",
 		func(ctx context.Context, input inventoryInput) (any, error) {
 			return s.app.ListFortiGates(ctx, input.Profile, input.ADOM, input.IncludeInterfaces, input.IncludeRoutes, input.IncludeRaw)
 		})
 	addReadTool(s, "refresh_inventory", "Refresh FortiGate inventory",
-		"Force a read-only refresh of all configured FortiManager profiles and drop cached FortiManager objects, policies, monitor reads, live policy lookups, web filter settings and ratings. FortiAnalyzer reads keep their own TTL. Inventory already refreshes in the background on the configured interval; call this only when the user asks for current data or after a known FortiManager change. Offline FortiGates, stale-looking timestamps within the interval, or a loading inventory are not reasons to call it. Returns the inventory summary (as inventory_status). The refresh continues even if this call stops waiting; then the summary shows refresh_in_progress and inventory_status shows the result later. If a refresh finished while this call waited, its snapshot is returned without repeating the appliance reads.",
+		"Refresh all FortiManager profiles and clear their object, policy, monitor, live-lookup, web-filter and rating caches; FortiAnalyzer TTLs stay unchanged. Use only for requested current data or known manager changes, not offline devices, timestamps within the refresh interval or loading inventory. Returns inventory_status summary. Reuses an overlapping refresh; work continues after the caller stops waiting. Check refresh_in_progress with inventory_status.",
 		func(ctx context.Context, _ refreshInput) (any, error) {
 			return s.app.RefreshInventory(ctx)
 		})
 	addReadTool(s, "get_fortigate_interfaces", "Get FortiGate interfaces",
-		"Interfaces of one managed FortiGate from the FortiManager device database, optionally limited to one VDOM: name, alias, type, IP/netmask, connected networks, IPv6, VDOM, status, role, parent and zone. Served from the inventory snapshot (see data_as_of) without an appliance request; fresh=true reads FortiManager now. adom is taken from the inventory when omitted.",
+		"Read one device's interfaces from cached FortiManager inventory, optionally one VDOM: addresses/networks, IPv6, alias/type, status/role, parent and zone. Check data_as_of; fresh=true reads the manager database now, not live FortiGate state. Omitted adom is inferred from inventory.",
 		func(ctx context.Context, input interfacesInput) (any, error) {
 			return s.app.GetInterfaces(ctx, input.Profile, input.ADOM, input.Device, input.VDOM, input.IncludeRaw, input.Fresh)
 		})
 	addReadTool(s, "get_fortigate_settings", "Get FortiGate settings",
-		"Read one live FortiGate FortiOS 7.x monitor or CMDB resource through FortiManager GET proxy. Requires device and an accepted /api/v2/monitor/* or /api/v2/cmdb/* resource; field descriptions list common aliases. Infer ADOM from inventory when omitted. Stable monitor reads cache for 30 seconds; sessions do not. A silent appliance times out before the request deadline. Prefer resolve_route for configured routes and get_firewall_sessions, get_vpn_status, get_ha_status or get_routing_neighbors for focused operational evidence.",
+		"GET a live FortiGate monitor/CMDB resource through FortiManager; requires device and an allowed resource (aliases in field schema). Infer omitted ADOM from inventory. Stable monitors cache 30s; sessions do not. Silent appliances time out before the request deadline. Prefer resolve_route for configured routes and focused session/VPN/HA/routing-neighbor tools for operational evidence.",
 		func(ctx context.Context, input settingsInput) (any, error) {
 			return s.app.GetFortiManagerSettings(ctx, input.Profile, input.ADOM, input.Device, input.VDOM, input.Resource)
 		})
 	addReadTool(s, "get_fortimanager_status", "Get FortiManager status",
-		"Read a FortiManager JSON-RPC resource with method get: system status, tasks, DVMDB devices/ADOMs/groups, policy packages and objects, package installation status, or security-console state. Paths outside /sys, /dvmdb, /pm, /task and /securityconsole are rejected; nothing is written.",
+		"GET FortiManager status, tasks, devices/ADOMs/groups, packages/objects, install status or security-console state. Only /sys, /dvmdb, /pm, /task and /securityconsole paths are allowed; no writes.",
 		func(ctx context.Context, input managerReadInput) (any, error) {
 			return s.app.GetFortiManagerRead(ctx, input.Profile, input.Resource, input.Data)
 		})
 	addReadTool(s, "list_firewall_policies", "List firewall policies",
-		"List IPv4 or IPv6 firewall policies of one ADOM, optionally one package, one device's packages (adom is then taken from the inventory) or one policy_id, in package order. Results preserve package and policy provenance, interfaces, IPv4 and IPv6 addresses, internet services, users and groups, services, schedule, UTM status, security profiles and install-on scope. Paged: limit (default 100) and offset over all selected policies, with total and truncated. Reads share the cache of lookup_firewall_policy.",
+		"List ADOM IPv4/IPv6 policies in package order; filter package, device packages or policy_id. Device can infer ADOM. Preserves package/policy provenance, match conditions, UTM/profiles and install-on scope. limit/offset page across selected policies (default 100); inspect total/truncated. Shares lookup_firewall_policy cache.",
 		func(ctx context.Context, input policiesInput) (any, error) {
 			return s.app.ListPolicies(ctx, service.PolicyListInput{
 				Profile: input.Profile, ADOM: input.ADOM, Package: input.Package, Device: input.Device, IPVersion: input.IPVersion,
@@ -252,7 +252,7 @@ func (s *Server) registerTools() {
 			})
 		})
 	addReadTool(s, "list_policy_objects", "List policy objects",
-		"Read a FortiManager ADOM firewall object table such as firewall/address, firewall/addrgrp, firewall/vip, firewall/service/custom or firewall/service/group, or one object by name. Use list_firewall_policies for policy entries. object_type is the path after /obj/ and must start with firewall/. Paged by FortiManager: limit (default 100) and offset; per-device mappings (dynamic_mapping) are omitted unless include_dynamic_mapping is set.",
+		"Read an ADOM firewall object table or named object, e.g. addresses, groups, VIPs or services. Use list_firewall_policies for policy entries. object_type follows /obj/ and must start firewall/. Appliance-paged limit/offset (default 100); dynamic_mapping is opt-in.",
 		func(ctx context.Context, input objectsInput) (any, error) {
 			return s.app.ListObjects(ctx, service.ObjectListInput{
 				Profile: input.Profile, ADOM: input.ADOM, Device: input.Device, ObjectType: input.ObjectType, Name: input.Name,
@@ -260,15 +260,15 @@ func (s *Server) registerTools() {
 			})
 		})
 	addReadTool(s, "lookup_firewall_policy", "Lookup firewall policy across ADOMs",
-		"Find the configured first-match verdict for a flow. Requires source_ip, destination_ip and destination_port. Scope profile/adom/device/vdom and known source port/ingress; omitted scope searches inventoried candidates. DNS alternatives are evaluated separately. decisions identifies each device/VDOM/package/destination verdict; matches retains evaluation order. Unknown identity, schedules, mappings or constrained source ports make matches tentative. VIP matching uses mapped addresses; this does not resolve downstream NAT or the return path. Live FortiGate lookup (at most four, each up to 10 s) is compared only in the same scope. ambiguous_configured_verdict requires checking installed package state. complete=false means a read failed: missing matches prove nothing; implicit_deny requires all reads to succeed.",
+		"Find configured first-match flow verdicts; requires source_ip/destination_ip/destination_port. Scope profile/adom/device/vdom and known source port/ingress; omitted scope searches inventory candidates. Evaluate DNS alternatives separately. decisions gives scoped package/destination verdicts; matches preserves order. Unresolved identity/schedules/mappings/source-port constraints stay tentative. VIP matching uses mapped addresses, not downstream NAT/return-path proof. Compare live lookups only in matching scope (max 4, 10s each). ambiguous_configured_verdict: check installed packages. complete=false: missing matches prove nothing; implicit_deny requires all reads to succeed.",
 		func(ctx context.Context, input service.PolicyLookupInput) (any, error) {
 			return s.app.LookupPolicies(ctx, input)
 		})
-	ratingDescription := "Return the live FortiGuard category (id, name, group) of a URL, rated by a managed FortiGate through the FortiManager proxy: the server's dedicated rating FortiGate when configured, otherwise the given device (trace the user's traffic to find it); it never picks a device on its own. Usually one request and a few seconds; a URL rated in the last 15 minutes is answered from cache (rating.cached, rated_at). rating.attempt_errors explains each failed device. Next, call check_web_filter with the returned category and the url."
+	ratingDescription := "Get URL category (id/name/group) via a managed FortiGate through FortiManager; never auto-selects a device. Cached 15m: inspect rating.cached/rated_at and attempt_errors for failures. Pass category and url to check_web_filter for filtering decisions."
 	if device := s.app.RatingDevice(); device != "" {
-		ratingDescription += " This server rates with its configured FortiGate " + device + ", so device is optional and the rating can run while the user's path is still being traced."
+		ratingDescription += " Configured rating FortiGate: " + device + "; device is optional. Rating can run during path discovery."
 	} else {
-		ratingDescription += " This server has no dedicated rating FortiGate: pass device."
+		ratingDescription += " No dedicated rating FortiGate: device is required."
 	}
 	addReadTool(s, "rate_url", "FortiGuard category of a URL",
 		ratingDescription,
@@ -276,17 +276,17 @@ func (s *Server) registerTools() {
 			return s.app.RateURL(ctx, input)
 		})
 	addReadTool(s, "check_web_filter", "Where a web category is blocked or allowed",
-		"Explain configured URL/category filtering and where profiles apply. Use rate_url for category; pass url for concrete sites so static URL entries and local overrides are included. Scope device and carrying policy_id from lookup_firewall_policy when known. Returns profile decisions, enabled firewall/IPv6/security/proxy policy references, device/VDOM targets and stored package status. A missing category entry allows that category; URL block/allow/exempt/monitor and local overrides can change the result. Reads FortiManager configuration, not live enforcement. complete=false preserves partial reads: repeat shortly for cached progress; missing profiles are not proof of absence.",
+		"Explain configured URL/category filtering and profile applicability, not live enforcement. Get category via rate_url; include url for static entries/local overrides. Scope device and known carrying policy_id. Returns decisions, enabled firewall/IPv6/security/proxy policy references, device/VDOM targets and stored package status. Missing category entries allow that category; URL actions/overrides may change it. complete=false retains partial reads: retry shortly for cached progress; missing profiles prove no absence.",
 		func(ctx context.Context, input service.CheckWebFilterInput) (any, error) {
 			return s.app.CheckWebFilter(ctx, input)
 		})
 	addReadTool(s, "fortianalyzer_status", "Get FortiAnalyzer status",
-		"Read system status from a configured FortiAnalyzer profile using the JSON-RPC API.",
+		"Read configured FortiAnalyzer system status via JSON-RPC.",
 		func(ctx context.Context, input analyzerInput) (any, error) {
 			return s.app.FortiAnalyzerStatus(ctx, input.Profile)
 		})
 	addReadTool(s, "search_fortianalyzer_logs", "Search FortiAnalyzer logs",
-		"Search FortiAnalyzer Log View within a verified analyzer profile/ADOM, logged devname, filter and absolute time window. Device names come from map_analyzer_device. Returns effective scope/time, task/progress, records newest first and next_action with exact suggested arguments. Execute next_action to poll the SAME partial page, page a task, or restart an exhausted match budget; separate searches need not share a snapshot. limit on submit is the match budget, not just page size. complete describes search execution, not all possible matches; total_count can count scanned logs. Partial execution failures retain typed evidence with isError=true; normal unfinished searches are resumable. Unknown task scope or persistent permission failures require correction. Zero rows prove only no retrieved matches in that scope; log receipt is attached when available.",
+		"Search Log View in verified analyzer profile/ADOM, logged devname (map_analyzer_device), filter and absolute time window. Returns scope/time, task/progress, newest-first rows and next_action. Validate callable tool/arguments: poll the SAME partial page, page a task or restart an exhausted budget; separate searches may see different snapshots. Submit limit is a match budget. complete means execution finished, not exhaustive matches; total_count may count scanned logs. Partial failures retain evidence with isError=true; unfinished searches are resumable. Correct unknown task scope/persistent permission errors before retrying. Zero rows mean no retrieved matches; receipt attaches when available at offset 0.",
 		func(ctx context.Context, input logSearchInput) (any, error) {
 			start, err := parseTime(input.Start)
 			if err != nil {
@@ -302,72 +302,72 @@ func (s *Server) registerTools() {
 			})
 		})
 	addReadTool(s, "get_fortianalyzer_data", "Get FortiAnalyzer data",
-		"Read a FortiAnalyzer JSON-RPC resource with method get: system status, DVMDB devices/ADOMs (to map FortiGate names to logged device identity), tasks, Log View fields and existing searches (a logsearch/<task_id> read returns progress with the records), log statistics (/logview/adom/<adom>/logstats where available), FortiView, reports, events, and incidents. System status, device lists, log field lists and logstats are cached for 5 minutes. Paths outside /sys, /dvmdb, /task, /logview, /fortiview, /report, /event, /eventmgmt and /incidents are rejected. Prefer map_analyzer_device for the logged devname and get_log_receipt for last-received times.",
+		"GET analyzer data under /sys, /dvmdb, /task, /logview, /fortiview, /report, /event, /eventmgmt or /incidents only. Existing logsearch/<task_id> reads return progress/records. Status, device lists, logfields and logstats cache 5m. Prefer map_analyzer_device for logged identity and get_log_receipt for last-received times.",
 		func(ctx context.Context, input analyzerReadInput) (any, error) {
 			return s.app.FortiAnalyzerRead(ctx, input.Profile, input.Resource, input.Data)
 		})
 	addReadTool(s, "get_firewall_sessions", "Filtered live firewall sessions",
-		"Read a short slice of the live FortiGate session table and keep rows that match source, destination, port, protocol or policy id. FortiOS often ignores a session filter, so count rows are requested (default 50, at most 200) and filtered locally. filtered_locally is set, and a later matching session can be absent when the page is shorter than the table. The table is not cached. Each row has src, dst, sport, dport, proto, policy id, SNAT, duration and bytes.",
+		"Read an uncached live session slice, then filter source/destination/port/protocol/policy locally because FortiOS may ignore filters. count defaults to 50, max 200; filtered_locally indicates matches outside the slice may be missed. Returns tuples, policy, SNAT, duration and bytes.",
 		func(ctx context.Context, input service.SessionQuery) (any, error) {
 			return s.app.GetFirewallSessions(ctx, input)
 		})
 	addReadTool(s, "resolve_address_identity", "Who holds an address now",
-		"Look up one IP in the live DHCP leases, ARP table, FSSO and firewall user table of one FortiGate. A failed source is listed under errors and the others still return. This is not connected-subnet ownership (use resolve_ip_ownership for that) and an empty source is not proof the address was never used. The reads are not cached.",
+		"Find one IP in a FortiGate's live DHCP, ARP, FSSO and firewall-user tables; uncached. Failed sources appear in errors; others still return. Empty results do not prove past absence. Use resolve_ip_ownership for connected-subnet ownership.",
 		func(ctx context.Context, input service.AddressIdentityQuery) (any, error) {
 			return s.app.ResolveAddressIdentity(ctx, input)
 		})
 	addReadTool(s, "get_vpn_status", "IPsec and SSL-VPN status",
-		"Short live rows for IPsec tunnels (name, remote gateway, status, bytes) and SSL-VPN logins (user, remote host, duration) on one FortiGate. Both monitor reads are reused for 30 seconds. This is not the configured phase1 object.",
+		"Read one FortiGate's IPsec tunnel status/gateway/bytes and SSL-VPN user/host/duration; cached 30s. Operational state, not configured phase1 objects.",
 		func(ctx context.Context, input service.DeviceScope) (any, error) {
 			return s.app.GetVPNStatus(ctx, input)
 		})
 	addReadTool(s, "get_ha_status", "HA role, peers and checksums",
-		"Read HA peers, checksums and the system HA configuration of one FortiGate. checksum_sync is true only when at least two checksums were read and they are equal. A failed peer or checksum read leaves checksum_sync false and is listed under errors. The reads are reused for 30 seconds.",
+		"Read one FortiGate's HA peers, checksums and HA configuration; cached 30s. checksum_sync requires at least two equal checksums; false also covers failed peer/checksum reads, listed in errors.",
 		func(ctx context.Context, input service.DeviceScope) (any, error) {
 			return s.app.GetHAStatus(ctx, input)
 		})
 	addReadTool(s, "get_package_install_status", "Package install state of one FortiGate",
-		"FortiManager's stored package install state for one device. vdom empty reads every inventoried VDOM, at most 48. status is installed, modified or unknown. It is not the FortiGate's running checksum. The same cache serves check_web_filter.",
+		"Read manager-stored package install state (installed/modified/unknown), not running FortiGate checksum. Empty vdom covers inventoried VDOMs, max 48. Shares check_web_filter cache.",
 		func(ctx context.Context, input service.DeviceScope) (any, error) {
 			return s.app.GetPackageInstallStatus(ctx, input)
 		})
 	addReadTool(s, "count_fortianalyzer_logs", "Count FortiAnalyzer matches before rows",
-		"Submit a Log View search and read /logview/adom/<adom>/logsearch/count/<task_id>. Rows are omitted. focus is all, deny (traffic action deny), webfilter, or ips. limit is the match budget (default 500, at most 500): FortiAnalyzer stops collecting once it has that many matches, so the count can be lower than the number of matching logs. total_count can count scanned lines. If the count read fails, the search total_count is still returned with count_error. Do not treat this count as a complete log answer. Use map_analyzer_device for device.",
+		"Run a Log View search plus its count read; omit rows. focus selects all/deny/webfilter/ips. Submit limit is a match budget (default/max 500), so counts may understate matches; total_count may count scanned logs. If count fails, retain search total_count with count_error. Not an exhaustive log answer. Use map_analyzer_device for device.",
 		func(ctx context.Context, input service.LogFocusQuery) (any, error) {
 			return s.app.CountFortiAnalyzerLogs(ctx, input)
 		})
 	addReadTool(s, "map_analyzer_device", "Map a FortiGate to its FortiAnalyzer devname",
-		"Match an inventoried FortiGate serial, hostname or name to the FortiAnalyzer device list and return the logged name to use as search_fortianalyzer_logs device. Copying the FortiManager name into a log filter is a common empty search. analyzer_adom defaults to the profile's single configured ADOM, or root when the profile allows every ADOM. The device list is cached for 5 minutes.",
+		"Map inventoried FortiGate serial/hostname/name to analyzer logged devname for log searches; do not assume manager names match. analyzer_adom defaults to the profile's sole allowed ADOM, or root for unrestricted profiles. Device list caches 5m.",
 		func(ctx context.Context, input service.AnalyzerDeviceQuery) (any, error) {
 			return s.app.MapAnalyzerDevice(ctx, input)
 		})
 	addReadTool(s, "get_nat_for_flow", "Central SNAT, IP pool and VIP for a flow",
-		"Read the ADOM central SNAT map, IP pools and VIPs (the first 200 objects of each table, from the object cache) and keep rows that contain the source, destination or port text. This is not the address the FortiGate wrote on the wire. Confirm with get_firewall_sessions or a traffic log. When a row only names another object, that name is what was stored.",
+		"Find source/destination/port text in cached ADOM central SNAT, IP pool and VIP tables (first 200 objects each). Named references remain names; results are candidates, not observed translations. Confirm with get_firewall_sessions or traffic logs.",
 		func(ctx context.Context, input service.NATQuery) (any, error) {
 			return s.app.GetNATMapping(ctx, input)
 		})
 	addReadTool(s, "get_routing_neighbors", "BGP, OSPF and SD-WAN SLA",
-		"Short live rows for BGP neighbors, OSPF neighbors, and SD-WAN SLA samples (interface, latency, jitter, loss, state) on one FortiGate. The monitor reads are reused for 30 seconds. Configured routes stay on resolve_route.",
+		"Read one FortiGate's BGP/OSPF neighbors and SD-WAN SLA (interface, latency, jitter, loss, state); cached 30s. Use resolve_route for configured routes.",
 		func(ctx context.Context, input service.DeviceScope) (any, error) {
 			return s.app.GetRoutingNeighbors(ctx, input)
 		})
 	addReadTool(s, "get_package_history", "Package oid, install state and device revision",
-		"For one FortiGate, return the inventory package oid, the stored install status, the device conf_status, and a best-effort device revision get. A revision get that this FortiManager release refuses is reported under errors and the other fields are still returned. Install history that would need an exec call is not requested.",
+		"Return inventory package oid, stored install status, device conf_status and best-effort revision for one FortiGate. Failed revision reads appear in errors; other evidence remains. No exec-based install history.",
 		func(ctx context.Context, input service.PackageHistoryQuery) (any, error) {
 			return s.app.GetPackageHistory(ctx, input)
 		})
 	addReadTool(s, "get_policy_usage", "Policy hit counts and where an object is used",
-		"Live hit counts from the FortiGate policy monitor (policy id, name, hit count, bytes, last used), not cached. When name is set, where_used scans the ADOM firewall, IPv6, security and proxy policy tables for that address, service or ssl-ssh profile name. where_used_complete is false if a table failed or no name was requested; partial references remain available and errors identify failed profile, ADOM, package and table. The scan is local to those tables and is not FortiManager's where-used exec.",
+		"Read uncached live policy hits/bytes/last-used. With name, where_used scans ADOM firewall/IPv6/security/proxy tables for address, service or ssl-ssh references; not the manager where-used exec. where_used_complete=false when a table failed or name was omitted. Retain partial references; errors identify failed profile/ADOM/package/table.",
 		func(ctx context.Context, input service.PolicyUsageQuery) (any, error) {
 			return s.app.GetPolicyUsage(ctx, input)
 		})
 	addReadTool(s, "get_ssl_ssh_profile", "SSL/SSH inspection profile",
-		"Read one ADOM firewall ssl-ssh profile and return its inspection mode, https and ssh sections, and untrusted-certificate action, plus the profile object. The policy field inspection-mode is the policy's own mode; this object decides certificate inspection versus deep inspection per protocol.",
+		"Read an ADOM ssl-ssh profile: inspection mode, HTTPS/SSH settings, untrusted-certificate action and raw object. Determines certificate versus deep inspection per protocol; distinct from policy inspection-mode.",
 		func(ctx context.Context, input service.SSLProfileQuery) (any, error) {
 			return s.app.GetSSLSSHProfile(ctx, input)
 		})
 	addReadTool(s, "get_log_receipt", "When a device last sent logs",
-		"Read FortiAnalyzer /logview/adom/<adom>/logstats, cached for 5 minutes, and optionally keep the row whose name, serial or devname matches device. A missing row or an old last-received time means a zero log search may be a logging gap. A finished search with zero rows also attaches this read.",
+		"Read analyzer /logview/adom/<adom>/logstats (5m cache); optionally match device by name/serial/devname. Missing or old receipt may explain empty searches as logging gaps. Completed zero-row searches at offset 0 attach receipt when available.",
 		func(ctx context.Context, input service.LogReceiptQuery) (any, error) {
 			return s.app.GetLogReceipt(ctx, input)
 		})

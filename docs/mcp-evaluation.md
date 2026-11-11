@@ -129,3 +129,14 @@ Scheduling changes also require measured missed stages under the shared deadline
 ## Implementation status
 
 A–G are implemented with catalog/result measurement, corrected guidance, typed partial log recovery, explicit continuation, opt-in compact investigation, bounded overflow and compatible constraints. H evaluation preparation is complete; live host/model runs, token usage, discovery and structured-output experiments were intentionally excluded by the user. Server tests cannot establish those host outcomes.
+
+## Description compaction measurement (2026-11-11)
+
+All 29 tool descriptions were shortened while retaining scope, evidence source/freshness, incomplete-result limits and pagination guidance. Parameter schemas, annotations, titles, names and session instructions were unchanged by this compaction. Measurements use `TestCatalogMeasurements` with all tools enabled; catalog sizes are Go-serialized JSON array bytes, including JSON escaping.
+
+| Catalog variant | Description bytes before | After | Catalog bytes before | After |
+| --- | ---: | ---: | ---: | ---: |
+| No dedicated rating device | 14,167 | 9,594 | 46,058 | 41,455 |
+| Dedicated device `rating-fgt` | 14,257 | 9,642 | 46,148 | 41,503 |
+
+The default description text shrank by 4,573 bytes (32.3%); the serialized catalog shrank by 4,603 bytes (10.0%). Every description is shorter in both variants. Catalog comparison verified that all other tool metadata remained identical. MCP package tests, including route-guidance and input-schema checks, passed. These are byte reductions, not measured tokenizer savings or proof of unchanged model tool-selection quality; no live model evaluations were run.
