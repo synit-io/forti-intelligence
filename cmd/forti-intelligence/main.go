@@ -189,7 +189,7 @@ func logEffectiveConfiguration(logger *slog.Logger, flagPath string, cfg config.
 	}
 	if len(rating) > 0 {
 		logger.Info("FortiGuard rating through FortiManager", rating...)
-		logger.Warn("FortiGuard URL rating (rate_url) requires JSON API Read-Write on FortiManager to proxy POST requests. Ensure either: (1) the FortiManager profile account has JSON API Read-Write, or (2) a dedicated rating account with Read-Write is configured via rating.api_key or rating.username/password. Without this, rate_url will fail with permission denied.")
+		logger.Info("FortiGuard URL rating uses proxied POST requests that require JSON API Read-Write on the selected FortiManager account. Permissions have not been checked at startup; this message does not indicate an access failure.")
 	}
 }
 
