@@ -47,7 +47,7 @@ func New(app *service.Service, serverConfig config.ServerConfig, logger *slog.Lo
 	}
 	server.mcp = mcp.NewServer(&mcp.Implementation{Name: ServerName, Version: ServerVersion}, &mcp.ServerOptions{
 		Logger:       sdkLogger(logger),
-		Instructions: serverInstructions + " " + trafficReportingInstructions + " " + routeTraceGuidance + " " + "Start IP ownership questions with resolve_ip_ownership. Reuse its scoped interface, zone and package candidates instead of full interface dumps. Inspect freshness and errors; retain overlaps separately. Connected ownership is not forwarding: use resolve_route for configured routing, and the live routing table when dynamic routing or SD-WAN health can change the result. For website questions, trace the client's path with follow=true, rate the URL once, and check filtering at every scoped hop with the carrying policy when known. Inventory refreshes in the background; call refresh_inventory only for requested current data or a known FortiManager change. Resume timed-out FortiAnalyzer searches with their task_id. Act on error hints before retrying.",
+		Instructions: server.toolInstructions(serverInstructions + " " + trafficReportingInstructions + " " + routeTraceGuidance + " " + "Start IP ownership questions with resolve_ip_ownership. Reuse its scoped interface, zone and package candidates instead of full interface dumps. Inspect freshness and errors; retain overlaps separately. Connected ownership is not forwarding: use resolve_route for configured routing, and the live routing table when dynamic routing or SD-WAN health can change the result. For website questions, trace the client's path with follow=true, rate the URL once, and check filtering at every scoped hop with the carrying policy when known. Inventory refreshes in the background; call refresh_inventory only for requested current data or a known FortiManager change. Resume timed-out FortiAnalyzer searches with their task_id. Act on error hints before retrying."),
 	})
 	server.registerTools()
 	return server
@@ -228,4 +228,14 @@ func readonlyAnnotations(title string) *mcp.ToolAnnotations {
 		DestructiveHint: &falseValue,
 		OpenWorldHint:   &trueValue,
 	}
+}
+
+// toolInstructions avoids recommending unavailable tools in restricted deployments.
+func (s *Server) toolInstructions(full string) string {
+	for _, enabled := range s.config.Tools {
+		if !enabled {
+			return "Some tools are disabled by the administrator. Apply the workflows below only with advertised tools; names in instructions, descriptions and continuation results do not establish availability. If a required tool is unavailable, state the evidence gap and request a human check. " + full
+		}
+	}
+	return full
 }

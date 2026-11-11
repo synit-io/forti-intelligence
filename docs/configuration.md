@@ -2,6 +2,22 @@
 
 Build and connect a self-hosted server to your own Fortinet appliances. For capabilities and expected answers, start with the [project overview](../README.md).
 
+## Enable or disable MCP tools
+
+Use `server.tools` to override individual tool names. Omitted names remain enabled; `false` removes a tool from `tools/list` and rejects direct calls to it. `true` explicitly enables it. Unknown names fail configuration validation. Restart the server and reconnect the MCP client after changing the map; there is no live reload.
+
+```yaml
+server:
+  tools:
+    rate_url: false
+    investigate_traffic: false
+    check_web_filter: true
+```
+
+All 29 tool names are shown in [config.example.yaml](../config.example.yaml) and the [tool index](tools/README.md). Set every name to `false` to expose no tools. An empty or omitted map preserves the full catalog.
+
+These switches control MCP exposure, not internal operations or appliance permissions. For example, disabling `rate_url` alone does not stop `investigate_traffic` from rating a supplied URL, and disabling log search does not remove combined investigation log reads. Disable the combined tool too when that access path is unwanted. Background inventory, caches and generic read tools remain independent. Descriptions and result hints may reference disabled tools; clients must check the advertised catalog before following them.
+
 ## Requirements
 
 - Go 1.26.0 or newer to build locally (latest stable recommended), or Docker to build and run the container

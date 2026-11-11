@@ -43,6 +43,8 @@ Either way, the server enforces its own limits before any request leaves the pro
 
 The URL host and path are rated; the server does not fetch the website. The category alone does not decide access: pass both the category and URL to `check_web_filter` at each relevant hop.
 
+To hide and block this MCP tool, set `server.tools.rate_url: false`; see [tool availability](../configuration.md#enable-or-disable-mcp-tools) for combined-tool behavior.
+
 ## Related tools
 
 [`resolve_route`](resolve_route.md), [`check_web_filter`](check_web_filter.md), [`get_ssl_ssh_profile`](get_ssl_ssh_profile.md).

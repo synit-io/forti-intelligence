@@ -147,3 +147,35 @@ func TestValidateHTTPExposure(t *testing.T) {
 		})
 	}
 }
+
+func TestToolConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml string
+		wantError  bool
+	}{
+		{"default", "server: {}", false},
+		{"disabled", "server:\n  tools:\n    rate_url: false\n    inventory_status: true", false},
+		{"unknown", "server:\n  tools:\n    rate_urll: false", true},
+		{"wrong type", "server:\n  tools:\n    rate_url: disabled", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.yaml), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if err != nil {
+				return
+			}
+			if cfg.Server.ToolEnabled("rate_url") != (tc.name != "disabled") {
+				t.Fatal("wrong rate_url availability")
+			}
+			if !cfg.Server.ToolEnabled("inventory_status") {
+				t.Fatal("inventory_status must stay enabled")
+			}
+		})
+	}
+}

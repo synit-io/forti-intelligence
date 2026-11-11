@@ -83,6 +83,8 @@ type ServerConfig struct {
 	// cached, after each background inventory refresh, so the next lookup
 	// hits the new snapshot. It does not read packages nobody has asked for.
 	PrefetchCachedPolicies bool `yaml:"prefetch_cached_policies"`
+	// Tools overrides MCP tool availability by name. Omitted tools stay enabled.
+	Tools map[string]bool `yaml:"tools,omitempty"`
 }
 
 // DefaultMaxResultBytes is the default inner JSON result cap (512 KiB).
@@ -197,6 +199,9 @@ func Load(path string) (Config, error) {
 }
 
 func (c *Config) normalizeAndValidate() error {
+	if err := c.Server.ValidateTools(); err != nil {
+		return err
+	}
 	defaults := Default().Server
 	if c.Server.ListenAddress == "" {
 		c.Server.ListenAddress = defaults.ListenAddress

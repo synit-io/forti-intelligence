@@ -11,6 +11,37 @@ server:
   request_timeout: "30s"
   # Bounds inventory work across profiles, not concurrent MCP tool calls.
   max_concurrent_calls: 8
+  # MCP tool exposure; omitted names stay enabled. Restart after changes.
+  # tools:
+  #   check_web_filter: true
+  #   count_fortianalyzer_logs: true
+  #   fortianalyzer_status: true
+  #   get_firewall_sessions: true
+  #   get_fortianalyzer_data: true
+  #   get_fortigate_interfaces: true
+  #   get_fortigate_settings: true
+  #   get_fortimanager_status: true
+  #   get_ha_status: true
+  #   get_log_receipt: true
+  #   get_nat_for_flow: true
+  #   get_package_history: true
+  #   get_package_install_status: true
+  #   get_policy_usage: true
+  #   get_routing_neighbors: true
+  #   get_ssl_ssh_profile: true
+  #   get_vpn_status: true
+  #   inventory_status: true
+  #   investigate_traffic: true
+  #   list_firewall_policies: true
+  #   list_policy_objects: true
+  #   lookup_firewall_policy: true
+  #   map_analyzer_device: true
+  #   rate_url: true
+  #   refresh_inventory: true
+  #   resolve_address_identity: true
+  #   resolve_ip_ownership: true
+  #   resolve_route: true
+  #   search_fortianalyzer_logs: true
   # After each background inventory refresh, re-read policy tables that a
   # tool already cached so the next lookup matches the new snapshot.
   # prefetch_cached_policies: false

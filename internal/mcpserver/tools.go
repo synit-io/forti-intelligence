@@ -117,6 +117,9 @@ type analyzerReadInput struct {
 // with structured Fortinet details and whose panics are converted into tool
 // errors, so one faulty request never takes the server down.
 func addReadTool[In any](s *Server, name, title, description string, run func(context.Context, In) (any, error)) {
+	if !s.config.ToolEnabled(name) {
+		return
+	}
 	schema, schemaErr := jsonschema.For[In](nil)
 	if schemaErr != nil {
 		panic(schemaErr)
