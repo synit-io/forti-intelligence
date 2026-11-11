@@ -314,8 +314,7 @@ func retryableRPC(method string, err error) bool {
 // reaches the appliance (DNS failure, refused connection), after which a
 // retry cannot duplicate work.
 func requestNotSent(err error) bool {
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
+	if _, ok := errors.AsType[*net.DNSError](err); ok {
 		return true
 	}
 	var opErr *net.OpError
@@ -717,8 +716,7 @@ func isSessionError(err error) bool {
 	}
 	// Diagnostic hints and resource names are not authentication evidence.
 	message := err.Error()
-	var failure *rpcFailure
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[*rpcFailure](err); ok {
 		message = failure.info.Message
 	}
 	message = strings.ToLower(message)

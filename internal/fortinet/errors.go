@@ -100,8 +100,7 @@ func DescribeError(err error) ErrorInfo {
 	if err == nil {
 		return ErrorInfo{}
 	}
-	var failure *rpcFailure
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[*rpcFailure](err); ok {
 		return failure.info
 	}
 	return classifyError(0, 0, err.Error(), err)

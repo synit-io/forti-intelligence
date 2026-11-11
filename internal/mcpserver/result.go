@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/synit-io/forti-intelligence/internal/fortinet"
@@ -164,9 +165,7 @@ func boundedText(value string) string {
 func investigationOverflow(compact service.CompactInvestigation) []any {
 	v := compact.InvestigateOutput
 	omitted := make(map[string]int, len(compact.Omitted))
-	for key, count := range compact.Omitted {
-		omitted[key] = count
-	}
+	maps.Copy(omitted, compact.Omitted)
 	compact.Omitted = omitted
 	if v.Logs != nil {
 		logs := *v.Logs
