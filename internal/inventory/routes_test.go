@@ -102,7 +102,7 @@ func (m *routeRefreshManager) ListRoutesBatch(_ context.Context, _ string, targe
 
 func TestRefreshCollectsRoutesAndResolvesThem(t *testing.T) {
 	manager := &routeRefreshManager{
-		batchRefreshManager: batchRefreshManager{devices: []fortinet.Device{{Name: "edge-1"}, {Name: "edge-2"}}},
+		devices: []fortinet.Device{{Name: "edge-1"}, {Name: "edge-2"}},
 		routes: map[string][]fortinet.Route{
 			"edge-1": {{Family: "ipv4", VDOM: "root", SeqNum: 1, Destination: "0.0.0.0/0", Gateway: "10.0.0.254", Interface: "edge-1-wan", Distance: 10, Status: "enable"}},
 			"edge-2": {{Family: "ipv4", VDOM: "root", SeqNum: 1, Destination: "0.0.0.0/0", Gateway: "10.0.0.253", Interface: "edge-2-wan", Distance: 10, Status: "enable"}},

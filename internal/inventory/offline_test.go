@@ -32,8 +32,8 @@ func (m *offlineReadManager) ListInterfacesBatch(ctx context.Context, adom strin
 
 func TestOfflineDeviceReadFailureKeepsProfileFreshAndRetainsData(t *testing.T) {
 	manager := &offlineReadManager{
-		batchRefreshManager: batchRefreshManager{devices: []fortinet.Device{{Name: "edge-up", ConnectionStatus: "up"}, {Name: "edge-down", ConnectionStatus: "up"}}},
-		failDevices:         map[string]error{},
+		devices:     []fortinet.Device{{Name: "edge-up", ConnectionStatus: "up"}, {Name: "edge-down", ConnectionStatus: "up"}},
+		failDevices: map[string]error{},
 	}
 	store := NewStore(map[string]fortinet.Manager{"fmg": manager}, 0, 1)
 	first := store.Refresh(context.Background())

@@ -156,7 +156,7 @@ func TestInvestigateUsesResolvedWebsiteScope(t *testing.T) {
 func TestPolicyUsageReportsTableErrors(t *testing.T) {
 	app, manager := lookupFixture(t, []fortinet.FirewallPolicy{lanToWAN(1, "accept", "ALL")}, nil, nil)
 	app.managers["fmg"] = &failingPolicyListManager{fakeManager: manager}
-	value, err := app.GetPolicyUsage(context.Background(), PolicyUsageQuery{DeviceScope: DeviceScope{Profile: "fmg", ADOM: "test-adom-primary", Device: "fgt"}, Name: "all"})
+	value, err := app.GetPolicyUsage(context.Background(), PolicyUsageQuery{Profile: "fmg", ADOM: "test-adom-primary", Device: "fgt", Name: "all"})
 	if err != nil {
 		t.Fatal(err)
 	}

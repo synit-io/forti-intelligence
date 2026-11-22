@@ -43,8 +43,8 @@ func (s *Service) liveRoute(ctx context.Context, snapshot inventory.Snapshot, sc
 		resource = "/api/v2/monitor/router/ipv6"
 	}
 	evidence := &LiveRouteEvidence{
-		DeviceScope: DeviceScope{Profile: scope.Profile, ADOM: scope.ADOM, Device: scope.Device, VDOM: scope.VDOM},
-		Status:      "unavailable", Resource: resource, Matches: []LiveRouteMatch{},
+		Profile: scope.Profile, ADOM: scope.ADOM, Device: scope.Device, VDOM: scope.VDOM,
+		Status: "unavailable", Resource: resource, Matches: []LiveRouteMatch{},
 	}
 	var devices []fortinet.Device
 	for _, device := range snapshot.Devices {

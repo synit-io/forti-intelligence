@@ -168,7 +168,7 @@ func TestMonitorReadsAreReusedAndSessionsAreNot(t *testing.T) {
 	}
 	before := manager.proxyCalls.Load()
 	for range 2 {
-		value, err := app.GetFirewallSessions(context.Background(), SessionQuery{DeviceScope: DeviceScope{Device: "fgt"}, SourceIP: "10.1.1.1", Protocol: "tcp"})
+		value, err := app.GetFirewallSessions(context.Background(), SessionQuery{Device: "fgt", SourceIP: "10.1.1.1", Protocol: "tcp"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -208,7 +208,7 @@ func TestSessionMonitorRequestsDeclaredFiltersAndChecksTheBoundedSample(t *testi
 		}}}}}, nil
 	}
 	value, err := app.GetFirewallSessions(context.Background(), SessionQuery{
-		DeviceScope: DeviceScope{Device: "fgt"}, SourceIP: "2001:db8::1", DestinationIP: "2001:db8::2",
+		Device: "fgt", SourceIP: "2001:db8::1", DestinationIP: "2001:db8::2",
 		SourcePort: 52000, DestinationPort: 443, Protocol: "6", PolicyID: 7, Count: 2,
 	})
 	if err != nil {
@@ -219,12 +219,12 @@ func TestSessionMonitorRequestsDeclaredFiltersAndChecksTheBoundedSample(t *testi
 		t.Fatalf("sample = %#v", result)
 	}
 	manager.proxyOverride = func(string) (any, error) { return []any{}, nil }
-	empty, err := app.GetFirewallSessions(context.Background(), SessionQuery{DeviceScope: DeviceScope{Device: "fgt"}, PolicyID: 7})
+	empty, err := app.GetFirewallSessions(context.Background(), SessionQuery{Device: "fgt", PolicyID: 7})
 	if err != nil || empty.(map[string]any)["inspected"] != 0 || empty.(map[string]any)["appliance_filter_status"] != "unverified" {
 		t.Fatalf("empty sample = %#v, %v", empty, err)
 	}
 	manager.proxyOverride = func(string) (any, error) { return map[string]any{"status": "success", "vdom": "root"}, nil }
-	metadata, err := app.GetFirewallSessions(context.Background(), SessionQuery{DeviceScope: DeviceScope{Device: "fgt"}})
+	metadata, err := app.GetFirewallSessions(context.Background(), SessionQuery{Device: "fgt"})
 	if err == nil || metadata != nil {
 		t.Fatalf("metadata-only sample = %#v, %v", metadata, err)
 	}
@@ -281,7 +281,7 @@ func TestSessionMonitorOnlyBroadensAfterFortiGateRejectsFilters(t *testing.T) {
 			cfg := config.Default()
 			cfg.Profiles = []config.ProfileConfig{profile}
 			app := New(cfg, nil, map[string]fortinet.Manager{"fmg": manager}, nil)
-			query := SessionQuery{DeviceScope: DeviceScope{Profile: "fmg", Device: "fgt", ADOM: "test-adom-branch"}, SourceIP: "10.1.1.2"}
+			query := SessionQuery{Profile: "fmg", Device: "fgt", ADOM: "test-adom-branch", SourceIP: "10.1.1.2"}
 			value, err := app.GetFirewallSessions(context.Background(), query)
 			if test.status == http.StatusBadRequest {
 				if err != nil || value.(map[string]any)["appliance_filter_status"] != "rejected" || value.(map[string]any)["returned"] != 1 || filtered.Load() != 1 || broadened.Load() != 1 {
@@ -301,7 +301,7 @@ func TestSessionMonitorOnlyBroadensAfterFortiGateRejectsFilters(t *testing.T) {
 
 func TestDeskToolsFilterIdentityVPNHAAndNeighbors(t *testing.T) {
 	app, manager, _ := deskFixture(t)
-	identity, err := app.ResolveAddressIdentity(context.Background(), AddressIdentityQuery{DeviceScope: DeviceScope{Device: "fgt"}, IP: "10.1.1.1"})
+	identity, err := app.ResolveAddressIdentity(context.Background(), AddressIdentityQuery{Device: "fgt", IP: "10.1.1.1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestDeskToolsFilterIdentityVPNHAAndNeighbors(t *testing.T) {
 
 func TestNATPolicyHistoryAndSSLUseCachedReads(t *testing.T) {
 	app, manager, _ := deskFixture(t)
-	nat, err := app.GetNATMapping(context.Background(), NATQuery{DeviceScope: DeviceScope{Device: "fgt"}, SourceIP: "10.1.1.1"})
+	nat, err := app.GetNATMapping(context.Background(), NATQuery{Device: "fgt", SourceIP: "10.1.1.1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,13 +357,13 @@ func TestNATPolicyHistoryAndSSLUseCachedReads(t *testing.T) {
 		t.Fatalf("nat = %#v", nat)
 	}
 	reads := manager.objectReads.Load()
-	if _, err := app.GetNATMapping(context.Background(), NATQuery{DeviceScope: DeviceScope{Device: "fgt"}, SourceIP: "10.1.1.1"}); err != nil {
+	if _, err := app.GetNATMapping(context.Background(), NATQuery{Device: "fgt", SourceIP: "10.1.1.1"}); err != nil {
 		t.Fatal(err)
 	}
 	if manager.objectReads.Load() != reads {
 		t.Fatalf("object reads = %d, want %d from the object cache", manager.objectReads.Load(), reads)
 	}
-	usage, err := app.GetPolicyUsage(context.Background(), PolicyUsageQuery{DeviceScope: DeviceScope{Device: "fgt"}, PolicyID: 4, Name: "LAN-users"})
+	usage, err := app.GetPolicyUsage(context.Background(), PolicyUsageQuery{Device: "fgt", PolicyID: 4, Name: "LAN-users"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,7 @@ func TestNATPolicyHistoryAndSSLUseCachedReads(t *testing.T) {
 	if len(hits) != 1 || hits[0]["hit_count"] != 10 || len(used) == 0 || used[0]["policy_id"] != 4 {
 		t.Fatalf("usage = %#v", usage)
 	}
-	history, err := app.GetPackageHistory(context.Background(), PackageHistoryQuery{DeviceScope: DeviceScope{Device: "fgt"}})
+	history, err := app.GetPackageHistory(context.Background(), PackageHistoryQuery{Device: "fgt"})
 	if err != nil {
 		t.Fatal(err)
 	}
