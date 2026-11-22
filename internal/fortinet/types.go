@@ -301,15 +301,18 @@ type AddressObject struct {
 }
 
 type ServiceObject struct {
-	Name          string         `json:"name"`
-	Protocol      string         `json:"protocol,omitempty"`
-	TCPPortRange  string         `json:"tcp_port_range,omitempty"`
-	UDPPortRange  string         `json:"udp_port_range,omitempty"`
-	SCTPPortRange string         `json:"sctp_port_range,omitempty"`
-	PortRange     string         `json:"port_range,omitempty"`
-	Members       []string       `json:"members,omitempty"`
-	Type          string         `json:"type,omitempty"`
-	Raw           map[string]any `json:"raw,omitempty"`
+	Name           string         `json:"name"`
+	Protocol       string         `json:"protocol,omitempty"`
+	ProtocolNumber *int           `json:"protocol_number,omitempty"`
+	ICMPType       *int           `json:"icmp_type,omitempty"`
+	ICMPCode       *int           `json:"icmp_code,omitempty"`
+	TCPPortRange   string         `json:"tcp_port_range,omitempty"`
+	UDPPortRange   string         `json:"udp_port_range,omitempty"`
+	SCTPPortRange  string         `json:"sctp_port_range,omitempty"`
+	PortRange      string         `json:"port_range,omitempty"`
+	Members        []string       `json:"members,omitempty"`
+	Type           string         `json:"type,omitempty"`
+	Raw            map[string]any `json:"raw,omitempty"`
 }
 
 type ProxyResult struct {
@@ -329,6 +332,8 @@ type PolicyLookupRequest struct {
 	SourcePort      int
 	DestinationPort int
 	Protocol        string
+	ICMPType        *int
+	ICMPCode        *int
 	SourceInterface string
 }
 

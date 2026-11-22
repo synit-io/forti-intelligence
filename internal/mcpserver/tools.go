@@ -26,8 +26,10 @@ type investigateToolInput struct {
 	Detail          string `json:"detail,omitempty" jsonschema:"full (default) retains all existing fields; compact omits duplicate evidence and raw live lookup payloads, preserving scope and uncertainty"`
 	SourceIP        string `json:"source_ip" jsonschema:"Source IPv4 or IPv6 address of the flow"`
 	DestinationIP   string `json:"destination_ip" jsonschema:"Destination IP address or hostname"`
-	DestinationPort int    `json:"destination_port,omitempty" jsonschema:"Destination port. When set, the firewall policy lookup runs; when omitted, that step is skipped."`
-	Protocol        string `json:"protocol,omitempty" jsonschema:"tcp, udp, sctp, icmp, any, or an IP protocol number. When omitted the live policy lookup runs for TCP and UDP."`
+	DestinationPort int    `json:"destination_port,omitempty" jsonschema:"Destination port. Enables policy lookup for non-ICMP flows. Omit it for ICMP or ICMPv6."`
+	Protocol        string `json:"protocol,omitempty" jsonschema:"tcp, udp, sctp, icmp, icmpv6, any, or an IP protocol number. Omitted or any evaluates TCP and UDP separately in policy lookup."`
+	ICMPType        *int   `json:"icmp_type,omitempty" jsonschema:"ICMP or ICMPv6 message type, 0-255, when known"`
+	ICMPCode        *int   `json:"icmp_code,omitempty" jsonschema:"ICMP or ICMPv6 message code, 0-255, when known"`
 	SourcePort      int    `json:"source_port,omitempty" jsonschema:"Source port for configured routing and service matching, and the live policy lookup. Omit only when unknown; source-port constraints then remain tentative."`
 	SourceInterface string `json:"source_interface,omitempty" jsonschema:"Ingress interface or zone when inventory cannot infer it"`
 	Profile         string `json:"profile,omitempty" jsonschema:"FortiManager profile name. All inventoried profiles are searched when omitted."`
@@ -63,7 +65,7 @@ type settingsInput struct {
 
 type managerReadInput struct {
 	Profile  string         `json:"profile,omitempty" jsonschema:"FortiManager profile name from the server configuration. The default profile is used when omitted."`
-	Resource string         `json:"resource" jsonschema:"FortiManager JSON-RPC path under /sys, /dvmdb, /pm, /task or /securityconsole, for example /sys/status, /dvmdb/adom/<adom>/device, /task/task/<id>, /pm/config/adom/<adom>/_package/status/<device>/<vdom>"`
+	Resource string         `json:"resource" jsonschema:"FortiManager JSON-RPC path under /sys, /dvmdb, /pm, /task or /securityconsole, for example /sys/status, /dvmdb/adom/<adom>/device, /task/task/<id>, /pm/config/adom/<adom>/_package/status/<device>/<vdom>. Profiles with an ADOM allowlist accept /sys/status and paths scoped to an allowed ADOM."`
 	Data     map[string]any `json:"data,omitempty" jsonschema:"Optional extra JSON-RPC parameters for the get request such as fields, filter, loadsub, option, range"`
 }
 
@@ -109,7 +111,7 @@ type logSearchInput struct {
 
 type analyzerReadInput struct {
 	Profile  string         `json:"profile,omitempty" jsonschema:"FortiAnalyzer profile name from the server configuration. The default profile is used when omitted."`
-	Resource string         `json:"resource" jsonschema:"FortiAnalyzer JSON-RPC path under /sys, /dvmdb, /task, /logview, /fortiview, /report, /event, /eventmgmt or /incidents, for example /dvmdb/adom/<adom>/device, /logview/adom/<adom>/logfields, /logview/adom/<adom>/logsearch/<task_id>"`
+	Resource string         `json:"resource" jsonschema:"FortiAnalyzer JSON-RPC path under /sys, /dvmdb, /task, /logview, /fortiview, /report, /event, /eventmgmt or /incidents, for example /dvmdb/adom/<adom>/device, /logview/adom/<adom>/logfields, /logview/adom/<adom>/logsearch/<task_id>. Profiles with an ADOM allowlist accept /sys/status and paths scoped to an allowed ADOM."`
 	Data     map[string]any `json:"data,omitempty" jsonschema:"Optional request parameters such as limit, offset, devtype, logtype, filter, time-range"`
 }
 
@@ -182,7 +184,7 @@ func addReadTool[In any](s *Server, name, title, description string, run func(co
 
 func (s *Server) registerTools() {
 	addReadTool(s, "investigate_traffic", "Investigate a traffic flow",
-		"Investigate ownership, configured paths, policy and optional URL filtering across hops/destinations. Requires source_ip/destination_ip; destination_port enables policy lookup. Scope profile/adom/device/vdom. Read hops for every supported hop; compact removes duplicates/raw live payloads but retains fallback policy when no hops exist. Inspect errors/warnings and path.end for failed/skipped stages and tracing limits. include_logs retains partial task state/next_action. Keep ambiguous scopes and DNS alternatives separate. Routing alone proves neither delivery nor policy permission; upstream NAT and return-path coverage remain unverified.",
+		"Investigate ownership, configured paths, policy and optional URL filtering across hops/destinations. Requires source_ip/destination_ip. A destination_port or explicit ICMP or ICMPv6 protocol enables policy lookup. For ICMP, provide icmp_type and icmp_code when known. Scope profile/adom/device/vdom. Read hops for every supported hop and path.end for the stopping reason. Compact removes duplicates/raw live payloads but retains fallback policy when no hops exist. include_logs searches the known tuple and source-side analyzer identity when verified; inspect scope warnings and next_action. Keep ambiguous scopes and DNS alternatives separate. Routing alone proves neither delivery nor policy permission; upstream NAT and return-path coverage remain unverified.",
 		func(ctx context.Context, input investigateToolInput) (any, error) {
 			start, err := parseTime(input.LogStart)
 			if err != nil {
@@ -198,6 +200,7 @@ func (s *Server) registerTools() {
 			serviceInput := service.InvestigateInput{
 				SourceIP: input.SourceIP, DestinationIP: input.DestinationIP, DestinationPort: input.DestinationPort,
 				Protocol: input.Protocol, SourcePort: input.SourcePort, SourceInterface: input.SourceInterface,
+				ICMPType: input.ICMPType, ICMPCode: input.ICMPCode,
 				Profile: input.Profile, ADOM: input.ADOM, Device: input.Device, VDOM: input.VDOM, URL: input.URL,
 				IncludeLogs: input.IncludeLogs, LogProfile: input.LogProfile, LogADOM: input.LogADOM,
 				LogStart: start, LogEnd: end,
@@ -214,7 +217,7 @@ func (s *Server) registerTools() {
 			return s.app.ResolveIPOwnership(ctx, input)
 		})
 	addReadTool(s, "resolve_route", "Resolve configured routing for a destination",
-		"Resolve configured forwarding: ordered policy routes, SD-WAN rules, then connected/static routes by prefix, distance and priority. Supply known source/ingress/protocol/ports; missing conditions stay tentative. Keep hostname alternatives separate. follow=true traces managed hops until ambiguity; returns scoped decisions, egress/gateways and inventoried next-hop owners. Read path.end before last_managed_device; check carrying policies at every supported hop. Routing proves neither delivery, policy permission, NAT nor return-path symmetry. Use get_fortigate_settings for dynamic routes/live SD-WAN health.",
+		"Resolve configured forwarding: ordered policy routes, SD-WAN rules, then connected/static routes by prefix, distance and priority. Supply known source/ingress/protocol/ports; missing conditions stay tentative. With follow=true, inspect every supported hop until the path ends or becomes ambiguous. Read path.end before last_managed_device. live=true adds active routing-table evidence for an explicit device, VDOM and one destination IP. Read live_route status, matching prefixes and reported costs per routing instance. Check carrying policies, live SD-WAN health, NAT and return-path coverage separately.",
 		func(ctx context.Context, input service.RouteLookupInput) (any, error) {
 			return s.app.ResolveRoute(ctx, input)
 		})
@@ -260,7 +263,7 @@ func (s *Server) registerTools() {
 			})
 		})
 	addReadTool(s, "lookup_firewall_policy", "Lookup firewall policy across ADOMs",
-		"Find configured first-match flow verdicts; requires source_ip/destination_ip/destination_port. Scope profile/adom/device/vdom and known source port/ingress; omitted scope searches inventory candidates. Evaluate DNS alternatives separately. decisions gives scoped package/destination verdicts; matches preserves order. Unresolved identity/schedules/mappings/source-port constraints stay tentative. VIP matching uses mapped addresses, not downstream NAT/return-path proof. Compare live lookups only in matching scope (max 4, 10s each). ambiguous_configured_verdict: check installed packages. complete=false: missing matches prove nothing; implicit_deny requires all reads to succeed.",
+		"Find configured first-match flow verdicts. Requires source_ip and destination_ip, plus destination_port except for ICMP or ICMPv6. For ICMP, provide icmp_type and icmp_code when known. Scope profile/adom/device/vdom and known source port/ingress; omitted scope searches inventory candidates. Evaluate DNS alternatives separately. decisions gives scoped package/destination/protocol verdicts; matches preserves order. Unresolved service, identity, schedule and mapping constraints stay tentative. VIP matching uses mapped addresses, not downstream NAT/return-path proof. Compare live lookups only for the same scope and protocol (max 4, 10s each). ambiguous_configured_verdict: check installed packages. complete=false: missing matches prove nothing; implicit_deny requires all reads to succeed.",
 		func(ctx context.Context, input service.PolicyLookupInput) (any, error) {
 			return s.app.LookupPolicies(ctx, input)
 		})
@@ -307,7 +310,7 @@ func (s *Server) registerTools() {
 			return s.app.FortiAnalyzerRead(ctx, input.Profile, input.Resource, input.Data)
 		})
 	addReadTool(s, "get_firewall_sessions", "Filtered live firewall sessions",
-		"Read an uncached live session slice, then filter source/destination/port/protocol/policy locally because FortiOS may ignore filters. count defaults to 50, max 200; filtered_locally indicates matches outside the slice may be missed. Returns tuples, policy, SNAT, duration and bytes.",
+		"Read an uncached live session sample. Request supported source, destination, port, protocol and policy filters from FortiOS and check all requested fields locally. Count defaults to 50, max 200. Read inspected and appliance_filter_status before interpreting a short or empty sample. Returns tuples, policy, SNAT, duration and bytes.",
 		func(ctx context.Context, input service.SessionQuery) (any, error) {
 			return s.app.GetFirewallSessions(ctx, input)
 		})

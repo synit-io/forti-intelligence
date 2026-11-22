@@ -47,7 +47,7 @@ Data results are JSON text; execution errors may be plain text or retained JSON 
 
 ## 3. Traffic investigation
 
-When source, destination, and port are known, start with `investigate_traffic`; include explicit scope, source port when known, and `url` for websites. With incomplete inputs, use ownership/routing discovery where possible; obtain the required source, destination and destination port before `lookup_firewall_policy`.
+Start with `investigate_traffic` when the source, destination and traffic type are known. Supply the destination port for TCP, UDP or SCTP. For ping, specify ICMP and omit the ports. When the message is known, pass its type and code. An echo request uses type 8 for IPv4 or 128 for IPv6, with code 0. Include verified scope, the source port when known, and `url` for websites. Use ownership or routing discovery to fill missing scope before a policy lookup.
 
 Use `detail: compact` when duplicate/raw details are unnecessary; omitted `detail` retains the full view. Inspect `hops` for every hop/address and `route.path.end` for the stopping reason. Compact mode removes duplicate `route.path.hops`, including those under `other_addresses`; a null copy does not mean no path. Top-level policy/web-filter fields duplicate the first hop in full mode; when no scoped hop exists, inspect the fallback top-level policy even in compact mode. Request full detail only when omitted evidence matters.
 
@@ -61,17 +61,17 @@ Start from source-side ingress. Verify device/VDOM, ingress interface, zone, int
 
 Treat inter-VDOM links as separate routing/policy contexts, tunnel inner traffic separately from outer transport, and HA members as a cluster rather than consecutive hops. Use `get_ha_status` for roles/peers/checksum sync, `get_vpn_status` for IPsec/SSL-VPN state, and `resolve_address_identity` for DHCP/ARP/FSSO/firewall-user identity when relevant.
 
-Use scoped `resolve_route` with destination `ip`, `source_ip`, protocol, destination port, and known source port. It evaluates configured policy routes, SD-WAN, static and connected routes from FortiManager without a FortiGate call. `next_hops` identifies inventoried gateway owners; `follow: true` walks the managed path. Policy candidates carry the same route decision under `routing`.
+Use scoped `resolve_route` with destination `ip`, `source_ip`, protocol, destination port, and known source port. By default it evaluates configured policy routes, SD-WAN, static and connected routes from FortiManager. `next_hops` identifies inventoried gateway owners; `follow: true` walks the managed path. Policy candidates carry the same route decision under `routing`.
 
 Determine destination, selected route, egress interface, and next hop. Resolve routing when zones differ, transit links appear, multiple devices/VDOMs are plausible, or interface ownership is uncertain. Different zones may still belong to one FortiGate.
 
-A `tentative` route leaves its named condition unresolved. Use live routing through `get_fortigate_settings` when dynamic routes/live SD-WAN health may change selection, an SLA selects the SD-WAN route, or configuration shows a blackhole/no route. `get_routing_neighbors` provides BGP, OSPF, and SD-WAN SLA samples.
+A `tentative` route leaves its named condition unresolved. To check the installed route for one destination IP, call `resolve_route` with `live: true`, the FortiGate and its VDOM. Inspect the reported prefix, next hops and coverage. Use `get_routing_neighbors` for BGP, OSPF and SD-WAN health when they may explain the result.
 
 Read `path.end` before interpreting `path.last_managed_device`: the last traced device may be a stopping point, not the internet edge. Route following does not evaluate per-hop policy, inspection, or NAT.
 
 ### B. Resolve translation
 
-Record incoming and outgoing addresses/ports. Verify relevant VIP/DNAT, SNAT, central NAT, and port translation, including translated-destination routing. `get_nat_for_flow` lists central SNAT, IP pool, and VIP objects mentioning the flow; these are candidates, not proof of use. `get_firewall_sessions` provides a short live tuple slice and session SNAT. Use sessions/logs to establish actual translations.
+Record incoming and outgoing addresses/ports. Verify relevant VIP/DNAT, SNAT, central NAT, and port translation, including translated-destination routing. `get_nat_for_flow` lists central SNAT, IP pool, and VIP objects mentioning the flow; these are candidates, not proof of use. `get_firewall_sessions` provides a short live tuple slice and session SNAT. Check how many session rows were inspected. A matching session outside the sample can be missed. Use session or log evidence to establish the translation.
 
 Keep pool/dynamic mappings as alternatives unless evidence selects one. Carry the resulting tuple into downstream routing, policy, and log queries; re-resolve routes affected by translation. Never reuse the original tuple after verified translation or invent one address from a pool.
 
@@ -79,7 +79,7 @@ Keep pool/dynamic mappings as alternatives unless evidence selects one. Carry th
 
 Scope `lookup_firewall_policy` to the hop's profile, ADOM, device, VDOM, and proven ingress interface/zone. Include source port when known; omission leaves source-port-constrained services tentative. Overlapping VDOMs remain separate until resolved. The candidate list is not an ordered network path.
 
-Read `decisions` first: each profile/ADOM/device/VDOM/package/destination yields the configured first-match verdict or `implicit_deny`. `matches` lists matching policies in evaluation order with `first_match`. A tentative match names an unresolved condition. `complete: false` means a read failed; missing matches prove nothing. Policy IDs or rankings alone do not establish first-match order.
+Read `decisions` first: each profile/ADOM/device/VDOM/package/destination and protocol yields the configured first-match verdict or `implicit_deny`. `matches` lists matching policies in evaluation order with `first_match`. A tentative match names an unresolved condition. `complete: false` means a read failed; missing matches prove nothing. Policy IDs or rankings alone do not establish first-match order.
 
 Verify relevant package targeting, enabled state, evaluation order, action, address/group members, service ports/protocols, schedules, identity conditions, and per-device mappings. Unknown/dynamic conditions remain unproven. Use:
 

@@ -905,16 +905,30 @@ func parseServices(result any) []ServiceObject {
 		if name == "" {
 			continue
 		}
+		serviceNumber := func(names ...string) *int {
+			value := field(record, names...)
+			if value == nil {
+				return nil
+			}
+			number, err := strconv.Atoi(strings.TrimSpace(stringValueValue(value)))
+			if err != nil {
+				number = -1 // Keep an unreadable constraint distinct from an omitted one.
+			}
+			return &number
+		}
 		objects = append(objects, ServiceObject{
-			Name:          name,
-			Protocol:      stringValueValue(field(record, "protocol", "protocol-number")),
-			TCPPortRange:  joinStrings(stringSlice(field(record, "tcp-portrange", "tcp_portrange", "tcp-port-range"))),
-			UDPPortRange:  joinStrings(stringSlice(field(record, "udp-portrange", "udp_portrange", "udp-port-range"))),
-			SCTPPortRange: joinStrings(stringSlice(field(record, "sctp-portrange", "sctp_portrange", "sctp-port-range"))),
-			PortRange:     joinStrings(stringSlice(field(record, "portrange", "port-range", "port"))),
-			Members:       stringSlice(field(record, "member", "members")),
-			Type:          stringValueValue(field(record, "type")),
-			Raw:           record,
+			Name:           name,
+			Protocol:       stringValueValue(field(record, "protocol")),
+			ProtocolNumber: serviceNumber("protocol-number", "protocol_number"),
+			ICMPType:       serviceNumber("icmptype", "icmp_type"),
+			ICMPCode:       serviceNumber("icmpcode", "icmp_code"),
+			TCPPortRange:   joinStrings(stringSlice(field(record, "tcp-portrange", "tcp_portrange", "tcp-port-range"))),
+			UDPPortRange:   joinStrings(stringSlice(field(record, "udp-portrange", "udp_portrange", "udp-port-range"))),
+			SCTPPortRange:  joinStrings(stringSlice(field(record, "sctp-portrange", "sctp_portrange", "sctp-port-range"))),
+			PortRange:      joinStrings(stringSlice(field(record, "portrange", "port-range", "port"))),
+			Members:        stringSlice(field(record, "member", "members")),
+			Type:           stringValueValue(field(record, "type")),
+			Raw:            record,
 		})
 	}
 	return objects
@@ -985,8 +999,8 @@ func intValue(value any) int {
 	case float64:
 		return int(typed)
 	case json.Number:
-		value, _ := typed.Int64()
-		return int(value)
+		value, _ := ParseJSONInt(typed)
+		return value
 	case string:
 		text := strings.TrimSpace(typed)
 		if text == "" {
@@ -1004,12 +1018,28 @@ func intValue(value any) int {
 	}
 }
 
+// ParseJSONInt preserves integer tokens and accepts older decimal encodings.
+func ParseJSONInt(number json.Number) (int, bool) {
+	if value, err := strconv.Atoi(number.String()); err == nil {
+		return value, true
+	}
+	if strings.ContainsAny(number.String(), ".eE") {
+		if value, err := number.Float64(); err == nil {
+			return int(value), true
+		}
+	}
+	return 0, false
+}
+
 func boolValue(value any) bool {
 	switch typed := value.(type) {
 	case bool:
 		return typed
 	case float64:
 		return typed != 0
+	case json.Number:
+		value, _ := typed.Float64()
+		return value != 0
 	case string:
 		switch strings.ToLower(strings.TrimSpace(typed)) {
 		case "1", "true", "yes", "enable", "enabled", "on":

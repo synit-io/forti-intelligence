@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
@@ -24,8 +25,10 @@ type PolicyLookupInput struct {
 	SourceIP        string `json:"source_ip" jsonschema:"Source IPv4 or IPv6 address of the flow"`
 	DestinationIP   string `json:"destination_ip" jsonschema:"Destination IP address or FQDN; FQDNs are resolved with the MCP host's DNS and every same-family address is evaluated"`
 	SourcePort      int    `json:"source_port,omitempty" jsonschema:"Source port for configured service constraints and live lookup; constrained services remain tentative when omitted"`
-	DestinationPort int    `json:"destination_port" jsonschema:"Destination port, 1-65535"`
-	Protocol        string `json:"protocol,omitempty" jsonschema:"tcp, udp, sctp, icmp, any, or an IP protocol number 1-255. When omitted the live lookup runs for TCP and UDP"`
+	DestinationPort int    `json:"destination_port,omitempty" jsonschema:"Destination port, 1-65535. Required except for ICMP and ICMPv6"`
+	Protocol        string `json:"protocol,omitempty" jsonschema:"tcp, udp, sctp, icmp, icmpv6, any, or an IP protocol number 1-255. Omitted or any evaluates TCP and UDP separately"`
+	ICMPType        *int   `json:"icmp_type,omitempty" jsonschema:"ICMP or ICMPv6 message type, 0-255, when known"`
+	ICMPCode        *int   `json:"icmp_code,omitempty" jsonschema:"ICMP or ICMPv6 message code, 0-255, when known"`
 	SourceInterface string `json:"source_interface,omitempty" jsonschema:"Ingress interface or zone name when inventory cannot infer it, for example for routed sources"`
 }
 
@@ -37,11 +40,11 @@ type PolicyLookupOutput struct {
 	Errors                []inventory.RefreshError `json:"errors,omitempty"`
 	CandidateDevices      []PolicyCandidate        `json:"candidate_devices,omitempty"`
 	// Decisions states the configured verdict per device, package and
-	// destination: the first matching policy or the implicit deny.
+	// destination and protocol: the first matching policy or the implicit deny.
 	Decisions   []PolicyDecision   `json:"decisions,omitempty"`
 	LiveLookups []LivePolicyLookup `json:"live_lookups,omitempty"`
 	// Matches lists every matching policy in FortiOS evaluation order per
-	// device, package and destination; first_match marks the verdict.
+	// device, package, destination and protocol; first_match marks the verdict.
 	Matches   []PolicyMatch    `json:"matches,omitempty"`
 	Evaluated PolicyEvaluation `json:"evaluated"`
 	// Complete is false when a policy, package or object read failed or the
@@ -51,7 +54,7 @@ type PolicyLookupOutput struct {
 }
 
 // PolicyDecision is the configured verdict of one package for one
-// destination: the first matching policy in FortiOS evaluation order, or the
+// destination and protocol: the first matching policy in FortiOS evaluation order, or the
 // implicit deny when no policy matches and every read succeeded.
 type PolicyDecision struct {
 	Profile       string `json:"profile"`
@@ -60,6 +63,7 @@ type PolicyDecision struct {
 	VDOM          string `json:"vdom,omitempty"`
 	Package       string `json:"package"`
 	DestinationIP string `json:"destination_ip"`
+	Protocol      string `json:"protocol"`
 	PolicyID      int    `json:"policy_id"`
 	Action        string `json:"action"`
 	Confidence    string `json:"confidence"`
@@ -118,6 +122,7 @@ type PolicyMatch struct {
 	VDOM          string `json:"vdom,omitempty"`
 	Package       string `json:"package"`
 	DestinationIP string `json:"destination_ip"`
+	Protocol      string `json:"protocol"`
 	// Position is the policy's place in its package (evaluation order).
 	Position              int                     `json:"position"`
 	FirstMatch            bool                    `json:"first_match,omitempty"`
@@ -172,21 +177,29 @@ func (s *Service) LookupPolicies(ctx context.Context, input PolicyLookupInput) (
 	if err != nil {
 		return PolicyLookupOutput{}, err
 	}
-	if input.DestinationPort < 1 || input.DestinationPort > 65535 {
-		return PolicyLookupOutput{}, fmt.Errorf("destination_port must be between 1 and 65535")
+	input.Protocol, err = flowProtocol(input.Protocol, sourceIP.To4() == nil)
+	if err != nil {
+		return PolicyLookupOutput{}, err
+	}
+	if input.Protocol == "" {
+		input.Protocol = "any"
+	}
+	if input.DestinationPort < 0 || input.DestinationPort > 65535 {
+		return PolicyLookupOutput{}, fmt.Errorf("destination_port must be between 0 and 65535")
+	}
+	if input.DestinationPort == 0 && !isICMP(input.Protocol) {
+		return PolicyLookupOutput{}, fmt.Errorf("destination_port must be between 1 and 65535 for non-ICMP flows")
 	}
 	if input.SourcePort < 0 || input.SourcePort > 65535 {
 		return PolicyLookupOutput{}, fmt.Errorf("source_port must be between 0 and 65535")
 	}
-	rawProtocol := strings.TrimSpace(input.Protocol)
-	if rawProtocol == "" {
-		input.Protocol = "any"
-	} else {
-		input.Protocol = normalizeProtocol(rawProtocol)
-		if input.Protocol == "" {
-			return PolicyLookupOutput{}, fmt.Errorf("unsupported protocol %q; use tcp, udp, sctp, icmp, any, or a number from 1 to 255", rawProtocol)
-		}
+	if err := validateICMP(input.Protocol, input.ICMPType, input.ICMPCode); err != nil {
+		return PolicyLookupOutput{}, err
 	}
+	if isICMP(input.Protocol) {
+		input.SourcePort, input.DestinationPort = 0, 0
+	}
+	protocols := policyProtocols(input.Protocol)
 
 	ctx, cancel := s.withTimeout(ctx)
 	defer cancel()
@@ -311,7 +324,7 @@ func (s *Service) LookupPolicies(ctx context.Context, input PolicyLookupInput) (
 		output.Warnings = append(output.Warnings, fmt.Sprintf("Multiple FortiGate/VDOM candidates (%d) matched the available inventory evidence; results are not uniquely scoped.", len(candidates)))
 	}
 	if input.Protocol == "any" {
-		output.Warnings = append(output.Warnings, "Protocol was omitted. Static service matching accepts TCP/UDP-compatible services; live FortiOS policy lookup runs once for TCP and once for UDP.")
+		output.Warnings = append(output.Warnings, "Protocol is unspecified. Configured verdicts and live lookups are evaluated separately for TCP and UDP.")
 	}
 
 	output.CandidateDevices = make([]PolicyCandidate, 0, len(candidates))
@@ -421,11 +434,13 @@ func (s *Service) LookupPolicies(ctx context.Context, input PolicyLookupInput) (
 					// Report the package as undecided rather than leaving it out,
 					// so its absence is not read as "no policy matches".
 					for _, destinationIP := range destinationIPs {
-						key := decisionKey(manager.Name(), candidate.device.ADOM, candidate.device.Name, selectedVDOM, packageName, destinationIP.String())
-						if _, seen := groupComplete[key]; !seen {
-							groupOrder = append(groupOrder, key)
+						for _, protocol := range protocols {
+							key := decisionKey(manager.Name(), candidate.device.ADOM, candidate.device.Name, selectedVDOM, packageName, destinationIP.String(), protocol)
+							if _, seen := groupComplete[key]; !seen {
+								groupOrder = append(groupOrder, key)
+							}
+							groupComplete[key] = false
 						}
-						groupComplete[key] = false
 					}
 					continue
 				}
@@ -447,22 +462,26 @@ func (s *Service) LookupPolicies(ctx context.Context, input PolicyLookupInput) (
 			addressMatcher := newAddressResolver(objects.addresses)
 			serviceMatcher := newServiceResolver(objects.services)
 			for _, destinationIP := range destinationIPs {
-				key := decisionKey(manager.Name(), candidate.device.ADOM, candidate.device.Name, selectedVDOM, packageName, destinationIP.String())
-				if _, seen := groupComplete[key]; !seen {
-					groupOrder = append(groupOrder, key)
-				}
-				groupComplete[key] = complete
-				scoped := candidate
-				if destination, ok := candidate.destinations[destinationIP.String()]; ok {
-					scoped.candidate = destination
-				}
-				for position, policy := range policies {
-					matched, match := matchPolicy(policy, scoped, packageName, input, sourceIP, destinationIP, addressMatcher, serviceMatcher)
-					if matched {
-						match.Profile = manager.Name()
-						match.DestinationIP = destinationIP.String()
-						match.Position = position + 1
-						output.Matches = append(output.Matches, match)
+				for _, protocol := range protocols {
+					key := decisionKey(manager.Name(), candidate.device.ADOM, candidate.device.Name, selectedVDOM, packageName, destinationIP.String(), protocol)
+					if _, seen := groupComplete[key]; !seen {
+						groupOrder = append(groupOrder, key)
+					}
+					groupComplete[key] = complete
+					scoped := candidate
+					if destination, ok := candidate.destinations[destinationScope{destinationIP.String(), protocol}]; ok {
+						scoped.candidate = destination
+					}
+					flow := input
+					flow.Protocol = protocol
+					for position, policy := range policies {
+						matched, match := matchPolicy(policy, scoped, packageName, flow, sourceIP, destinationIP, addressMatcher, serviceMatcher)
+						if matched {
+							match.Profile = manager.Name()
+							match.DestinationIP = destinationIP.String()
+							match.Position = position + 1
+							output.Matches = append(output.Matches, match)
+						}
 					}
 				}
 			}
@@ -471,18 +490,18 @@ func (s *Service) LookupPolicies(ctx context.Context, input PolicyLookupInput) (
 
 	// FortiOS applies the first matching policy of a package in sequence
 	// order, so matches are listed in that order per device, package and
-	// destination; the first one is the configured verdict.
+	// destination and protocol; the first one is the configured verdict.
 	sort.SliceStable(output.Matches, func(i, j int) bool {
 		left, right := output.Matches[i], output.Matches[j]
-		leftKey := decisionKey(left.Profile, left.ADOM, left.Device, left.VDOM, left.Package, left.DestinationIP)
-		rightKey := decisionKey(right.Profile, right.ADOM, right.Device, right.VDOM, right.Package, right.DestinationIP)
+		leftKey := decisionKey(left.Profile, left.ADOM, left.Device, left.VDOM, left.Package, left.DestinationIP, left.Protocol)
+		rightKey := decisionKey(right.Profile, right.ADOM, right.Device, right.VDOM, right.Package, right.DestinationIP, right.Protocol)
 		if leftKey != rightKey {
 			return leftKey < rightKey
 		}
 		return left.Position < right.Position
 	})
 	output.Decisions = policyDecisions(output.Matches, groupOrder, groupComplete)
-	s.runLiveLookups(ctx, &output, liveTargets, input, sourceIP, destinationIPs)
+	s.runLiveLookups(ctx, &output, liveTargets, input, destinationIPs)
 	return output, nil
 }
 
@@ -559,14 +578,16 @@ func (s *Service) cachedPolicyLookup(ctx context.Context, key string, lookup fun
 	return result, nil
 }
 
-// runLiveLookups asks the candidate FortiGates for their live policy
-// decision, bounded in number and by the remaining budget, and compares
-// each answer with the configured verdict.
-func (s *Service) runLiveLookups(ctx context.Context, output *PolicyLookupOutput, targets []liveTarget, input PolicyLookupInput, sourceIP net.IP, destinationIPs []net.IP) {
-	protocols := []string{input.Protocol}
-	if input.Protocol == "any" {
-		protocols = []string{"tcp", "udp"}
+func policyProtocols(protocol string) []string {
+	if protocol == "any" {
+		return []string{"tcp", "udp"}
 	}
+	return []string{protocol}
+}
+
+// runLiveLookups compares each live answer with the configured verdict.
+func (s *Service) runLiveLookups(ctx context.Context, output *PolicyLookupOutput, targets []liveTarget, input PolicyLookupInput, destinationIPs []net.IP) {
+	protocols := policyProtocols(input.Protocol)
 	sent, capped, outOfBudget, afterTimeout := 0, 0, 0, 0
 	timedOut := make(map[string]bool)
 	for _, target := range targets {
@@ -593,10 +614,17 @@ func (s *Service) runLiveLookups(ctx context.Context, output *PolicyLookupOutput
 					}
 					sent++
 					lookupKey := strings.Join([]string{device.Profile, device.ADOM, device.Name, vdom, input.SourceIP, destinationIP.String(), protocol, strconv.Itoa(input.SourcePort), strconv.Itoa(input.DestinationPort), sourceInterface}, "\x00")
+					if input.ICMPType != nil {
+						lookupKey += "\x00type=" + strconv.Itoa(*input.ICMPType)
+					}
+					if input.ICMPCode != nil {
+						lookupKey += "\x00code=" + strconv.Itoa(*input.ICMPCode)
+					}
 					live, liveErr := s.cachedPolicyLookup(ctx, lookupKey, func() (fortinet.ProxyResult, error) {
 						return target.manager.PolicyLookup(ctx, device.ADOM, device.Name, vdom, fortinet.PolicyLookupRequest{
 							SourceIP: input.SourceIP, DestinationIP: destinationIP.String(), SourcePort: input.SourcePort,
 							DestinationPort: input.DestinationPort, Protocol: protocol, SourceInterface: sourceInterface,
+							ICMPType: input.ICMPType, ICMPCode: input.ICMPCode,
 						})
 					})
 					entry := LivePolicyLookup{
@@ -634,17 +662,17 @@ func (s *Service) runLiveLookups(ctx context.Context, output *PolicyLookupOutput
 	}
 }
 
-func decisionKey(profile, adom, device, vdom, pkg, destination string) string {
-	return strings.Join([]string{profile, adom, device, vdom, pkg, destination}, "\x00")
+func decisionKey(profile, adom, device, vdom, pkg, destination, protocol string) string {
+	return strings.Join([]string{profile, adom, device, vdom, pkg, destination, protocol}, "\x00")
 }
 
 // policyDecisions marks the first match of every device, package and
-// destination and states the configured verdict: that policy's action, or
+// destination/protocol and states the configured verdict: that policy's action, or
 // the implicit deny when no policy matched and every read succeeded.
 func policyDecisions(matches []PolicyMatch, order []string, complete map[string]bool) []PolicyDecision {
 	first := make(map[string]int)
 	for index := range matches {
-		key := decisionKey(matches[index].Profile, matches[index].ADOM, matches[index].Device, matches[index].VDOM, matches[index].Package, matches[index].DestinationIP)
+		key := decisionKey(matches[index].Profile, matches[index].ADOM, matches[index].Device, matches[index].VDOM, matches[index].Package, matches[index].DestinationIP, matches[index].Protocol)
 		if _, seen := first[key]; !seen {
 			first[key] = index
 			matches[index].FirstMatch = true
@@ -653,7 +681,7 @@ func policyDecisions(matches []PolicyMatch, order []string, complete map[string]
 	decisions := make([]PolicyDecision, 0, len(order))
 	for _, key := range order {
 		parts := strings.Split(key, "\x00")
-		decision := PolicyDecision{Profile: parts[0], ADOM: parts[1], Device: parts[2], VDOM: parts[3], Package: parts[4], DestinationIP: parts[5]}
+		decision := PolicyDecision{Profile: parts[0], ADOM: parts[1], Device: parts[2], VDOM: parts[3], Package: parts[4], DestinationIP: parts[5], Protocol: parts[6]}
 		if index, ok := first[key]; ok {
 			match := matches[index]
 			decision.VDOM, decision.PolicyID, decision.Action, decision.Confidence = match.VDOM, match.Policy.PolicyID, strings.ToLower(match.Policy.Action), match.Confidence
@@ -684,13 +712,24 @@ func livePolicyID(data any) *int {
 		switch typed := value.(type) {
 		case map[string]any:
 			for key, child := range typed {
-				if strings.EqualFold(key, "policy_id") || strings.EqualFold(key, "policyid") {
-					if number, ok := child.(float64); ok {
-						id := int(number)
-						found = &id
-						return
-					}
+				if !strings.EqualFold(key, "policy_id") && !strings.EqualFold(key, "policyid") {
+					continue
 				}
+				var id int
+				switch number := child.(type) {
+				case json.Number:
+					var ok bool
+					id, ok = fortinet.ParseJSONInt(number)
+					if !ok {
+						continue
+					}
+				case float64:
+					id = int(number)
+				default:
+					continue
+				}
+				found = &id
+				return
 			}
 			for _, child := range typed {
 				walk(child)
@@ -706,7 +745,7 @@ func livePolicyID(data any) *int {
 }
 
 // reconcileLive compares a live policy-lookup answer with the configured
-// verdict of the same device and destination.
+// verdict of the same device, destination and protocol.
 func reconcileLive(entry *LivePolicyLookup, output *PolicyLookupOutput) {
 	if entry.PolicyID == nil {
 		return
@@ -714,12 +753,12 @@ func reconcileLive(entry *LivePolicyLookup, output *PolicyLookupOutput) {
 	var selected *PolicyDecision
 	for i := range output.Decisions {
 		decision := &output.Decisions[i]
-		if decision.Profile != entry.Profile || decision.ADOM != entry.ADOM || decision.Device != entry.Device || decision.VDOM != entry.VDOM || decision.DestinationIP != entry.DestinationIP {
+		if decision.Profile != entry.Profile || decision.ADOM != entry.ADOM || decision.Device != entry.Device || decision.VDOM != entry.VDOM || decision.DestinationIP != entry.DestinationIP || decision.Protocol != entry.Protocol {
 			continue
 		}
 		if selected != nil {
 			entry.Agreement = "ambiguous_configured_verdict"
-			output.Warnings = append(output.Warnings, fmt.Sprintf("Live lookup on %s/%s/%s/%s to %s has several configured package verdicts; check the installed package before comparing policy IDs.", entry.Profile, entry.ADOM, entry.Device, entry.VDOM, entry.DestinationIP))
+			output.Warnings = append(output.Warnings, fmt.Sprintf("Live lookup on %s/%s/%s/%s to %s (%s) has several configured package verdicts; check the installed package before comparing policy IDs.", entry.Profile, entry.ADOM, entry.Device, entry.VDOM, entry.DestinationIP, entry.Protocol))
 			return
 		}
 		selected = decision
@@ -741,7 +780,11 @@ func reconcileLive(entry *LivePolicyLookup, output *PolicyLookupOutput) {
 type candidateState struct {
 	device       fortinet.Device
 	candidate    PolicyCandidate
-	destinations map[string]PolicyCandidate
+	destinations map[destinationScope]PolicyCandidate
+}
+
+type destinationScope struct {
+	ip, protocol string
 }
 
 type resolvedDestination struct {
@@ -878,8 +921,8 @@ func policyDeviceScopes(device fortinet.Device, wanted string) []fortinet.Device
 	return scopes
 }
 
-// policyCandidate keeps a summary for display and independent destination
-// selectors for evaluation. One DNS address must not borrow another's egress.
+// policyCandidate keeps independent egress selectors for each destination and
+// protocol so one flow does not borrow another's route.
 func (s *Service) policyCandidate(ctx context.Context, device fortinet.Device, sourceIP net.IP, destinationIPs []net.IP, input PolicyLookupInput, snapshotAt time.Time) (candidateState, bool) {
 	source, _ := matchingInterfaces(device.Interfaces, sourceIP, nil, input.SourceInterface)
 	if input.SourceInterface != "" && len(source) == 0 {
@@ -899,21 +942,27 @@ func (s *Service) policyCandidate(ctx context.Context, device fortinet.Device, s
 		base.Resolution = "destination-interface-only"
 		base.Warnings = []string{"Source IP did not match an inventoried interface; this candidate was selected from destination interface evidence only."}
 	}
-	state := candidateState{device: device, candidate: base, destinations: make(map[string]PolicyCandidate)}
+	state := candidateState{device: device, candidate: base, destinations: make(map[destinationScope]PolicyCandidate)}
+	protocols := policyProtocols(input.Protocol)
 	for _, destination := range destinationIPs {
 		scoped := base
 		_, scoped.DestinationInterfaces = matchingInterfaces(device.Interfaces, sourceIP, []net.IP{destination}, input.SourceInterface)
 		scoped.DestinationZones = interfaceZonesForNames(device.Interfaces, scoped.DestinationInterfaces)
-		if len(source) > 0 && len(scoped.DestinationInterfaces) == 0 {
-			var warnings []string
-			scoped.Routing, scoped.DestinationInterfaces, scoped.DestinationZones, warnings = s.routedDestination(ctx, device, sourceIP, source, base.SourceZones, []net.IP{destination}, input, snapshotAt)
-			scoped.Warnings = append(append([]string(nil), base.Warnings...), warnings...)
+		for _, protocol := range protocols {
+			flow := scoped
+			if len(source) > 0 && len(scoped.DestinationInterfaces) == 0 {
+				routeInput := input
+				routeInput.Protocol = protocol
+				var warnings []string
+				flow.Routing, flow.DestinationInterfaces, flow.DestinationZones, warnings = s.routedDestination(ctx, device, sourceIP, source, base.SourceZones, []net.IP{destination}, routeInput, snapshotAt)
+				flow.Warnings = append(append([]string(nil), base.Warnings...), warnings...)
+			}
+			state.destinations[destinationScope{destination.String(), protocol}] = flow
+			state.candidate.DestinationInterfaces = append(state.candidate.DestinationInterfaces, flow.DestinationInterfaces...)
+			state.candidate.DestinationZones = append(state.candidate.DestinationZones, flow.DestinationZones...)
+			state.candidate.Routing = append(state.candidate.Routing, flow.Routing...)
+			state.candidate.Warnings = append(state.candidate.Warnings, flow.Warnings...)
 		}
-		state.destinations[destination.String()] = scoped
-		state.candidate.DestinationInterfaces = append(state.candidate.DestinationInterfaces, scoped.DestinationInterfaces...)
-		state.candidate.DestinationZones = append(state.candidate.DestinationZones, scoped.DestinationZones...)
-		state.candidate.Routing = append(state.candidate.Routing, scoped.Routing...)
-		state.candidate.Warnings = append(state.candidate.Warnings, scoped.Warnings...)
 	}
 	state.candidate.DestinationInterfaces = uniqueStrings(state.candidate.DestinationInterfaces)
 	state.candidate.DestinationZones = uniqueStrings(state.candidate.DestinationZones)
@@ -970,6 +1019,7 @@ func (s *Service) routedDestination(ctx context.Context, device fortinet.Device,
 			resolverLoaded = true
 		}
 		decision := evaluateRouting(device, vdom, tuple, resolver)
+		decision.Protocol = input.Protocol
 		decision.Notes = append(decision.Notes, resolverNotes...)
 		decisions = append(decisions, decision)
 		interfaces = append(interfaces, decision.EgressInterfaces...)
@@ -1241,7 +1291,7 @@ func matchPolicy(policy fortinet.FirewallPolicy, candidate candidateState, packa
 	}
 	match := PolicyMatch{
 		ADOM: candidate.device.ADOM, Device: candidate.device.Name, Package: packageName,
-		VDOM: matchVDOM, Policy: policy,
+		VDOM: matchVDOM, Protocol: input.Protocol, Policy: policy,
 		SourceInterfaces:      candidate.candidate.SourceInterfaces,
 		DestinationInterfaces: candidate.candidate.DestinationInterfaces,
 		SourceZones:           candidate.candidate.SourceZones,
@@ -1331,13 +1381,15 @@ func matchPolicy(policy fortinet.FirewallPolicy, candidate candidateState, packa
 		match.Warnings = append(match.Warnings, "Destination address could not be proven from FortiManager objects; this is a tentative match.")
 	}
 
-	serviceMatched, serviceKnown, serviceEvidence := services.matches(policy.Services, input.Protocol, input.DestinationPort, input.SourcePort, policy.ServiceNegate)
+	serviceMatched, serviceKnown, serviceEvidence := services.matches(policy.Services, input, policy.ServiceNegate)
 	if !serviceMatched && serviceKnown {
 		return false, PolicyMatch{}
 	}
 	match.ServiceEvidence = serviceEvidence
 	if serviceKnown {
 		match.Score += 4
+	} else if isICMP(input.Protocol) {
+		match.Warnings = append(match.Warnings, "ICMP service conditions could not be proven; this is a tentative match. Provide icmp_type and icmp_code when the service restricts them.")
 	} else {
 		match.Warnings = append(match.Warnings, "Service conditions, including any source-port range, could not be proven; this is a tentative match. Provide source_port when the service restricts it.")
 	}
@@ -1603,41 +1655,60 @@ func newServiceResolver(objects []fortinet.ServiceObject) *serviceResolver {
 	return resolver
 }
 
-func (r *serviceResolver) matches(names []string, protocol string, destinationPort, sourcePort int, negate bool) (matched, known bool, evidence []string) {
+func (r *serviceResolver) matches(names []string, input PolicyLookupInput, negate bool) (matched, known bool, evidence []string) {
 	if len(names) == 0 || containsFold(names, "all") {
 		return !negate, true, []string{"ALL"}
 	}
 	unknown := false
 	for _, name := range names {
-		objectMatched, objectKnown := r.matchesOne(name, protocol, destinationPort, sourcePort)
+		objectMatched, objectKnown := r.matchesOne(name, input)
+		if objectMatched && objectKnown {
+			return !negate, true, []string{name}
+		}
 		if objectMatched {
+			matched = true
 			evidence = append(evidence, name)
-			if negate {
-				return false, objectKnown, evidence
-			}
-			return true, objectKnown, evidence
 		}
-		if !objectKnown {
-			unknown = true
-		}
+		unknown = unknown || !objectKnown
 	}
 	if negate {
 		return !unknown, !unknown, evidence
 	}
-	return false, !unknown, evidence
+	return matched, !unknown, evidence
 }
 
-func (r *serviceResolver) matchesOne(name, protocol string, port, sourcePort int) (bool, bool) {
+func (r *serviceResolver) matchesOne(name string, input PolicyLookupInput) (bool, bool) {
 	name = strings.TrimSpace(name)
-	if strings.EqualFold(name, "all") || strings.EqualFold(name, "all_tcp") && (protocol == "tcp" || protocol == "any") || strings.EqualFold(name, "all_udp") && (protocol == "udp" || protocol == "any") {
+	protocol := input.Protocol
+	switch strings.ToLower(name) {
+	case "all":
 		return true, true
+	case "all_tcp":
+		return protocol == "tcp", true
+	case "all_udp":
+		return protocol == "udp", true
 	}
 	object, ok := r.objects[name]
 	if !ok {
 		// The ADOM's own service objects win; the built-in definitions only
 		// cover predefined services missing from the read.
+		switch strings.ToLower(name) {
+		case "all_icmp":
+			return protocol == "icmp", true
+		case "all_icmp6":
+			return protocol == "icmpv6", true
+		case "ping", "ping6":
+			wantProtocol, echoType := "icmp", 8
+			if strings.EqualFold(name, "ping6") {
+				wantProtocol, echoType = "icmpv6", 128
+			}
+			if protocol != wantProtocol {
+				return false, true
+			}
+			return matchICMPTypeCode(&echoType, nil, input)
+		}
 		if builtin, found := builtinServices[strings.ToLower(name)]; found {
-			return builtinProtocolPort(builtin, protocol, port), true
+			return builtinProtocolPort(builtin, protocol, input.DestinationPort), true
 		}
 		return false, false
 	}
@@ -1647,17 +1718,24 @@ func (r *serviceResolver) matchesOne(name, protocol string, port, sourcePort int
 	r.visiting[name] = true
 	defer delete(r.visiting, name)
 	if len(object.Members) > 0 {
-		unknown := false
-		for _, member := range object.Members {
-			matched, known := r.matchesOne(member, protocol, port, sourcePort)
-			if matched {
-				return true, known
-			}
-			if !known {
-				unknown = true
-			}
+		matched, known, _ := r.matches(object.Members, input, false)
+		return matched, known
+	}
+	if strings.EqualFold(object.Protocol, "IP") || (object.Protocol == "" && object.ProtocolNumber != nil) {
+		if object.ProtocolNumber == nil || *object.ProtocolNumber < 0 || *object.ProtocolNumber > 255 {
+			return false, false
 		}
-		return false, !unknown
+		return *object.ProtocolNumber == 0 || normalizeProtocol(strconv.Itoa(*object.ProtocolNumber)) == protocol, true
+	}
+	if configuredProtocol := normalizeProtocol(object.Protocol); isICMP(configuredProtocol) {
+		if configuredProtocol != protocol {
+			return false, true
+		}
+		return matchICMPTypeCode(object.ICMPType, object.ICMPCode, input)
+	}
+	hasPortRange := object.TCPPortRange != "" || object.UDPPortRange != "" || object.SCTPPortRange != "" || object.PortRange != ""
+	if object.Protocol != "" && !serviceProtocolMatches(object.Protocol, protocol) || isICMP(protocol) && hasPortRange {
+		return false, true
 	}
 	selected := object.PortRange
 	switch protocol {
@@ -1673,16 +1751,28 @@ func (r *serviceResolver) matchesOne(name, protocol string, port, sourcePort int
 		if object.SCTPPortRange != "" {
 			selected = object.SCTPPortRange
 		}
-	case "any":
-		selected = strings.TrimSpace(object.TCPPortRange + " " + object.UDPPortRange + " " + object.PortRange)
 	}
 	if selected == "" {
-		return false, false
+		return false, hasPortRange
 	}
-	if object.Protocol != "" && protocol != "any" && !serviceProtocolMatches(object.Protocol, protocol) {
-		return false, true
+	return servicePortsMatch(selected, input.DestinationPort, input.SourcePort)
+}
+
+func matchICMPTypeCode(icmpType, icmpCode *int, input PolicyLookupInput) (bool, bool) {
+	known := true
+	for _, field := range [2]struct{ configured, actual *int }{{icmpType, input.ICMPType}, {icmpCode, input.ICMPCode}} {
+		if field.configured == nil {
+			continue
+		}
+		if field.actual == nil || *field.configured < 0 || *field.configured > 255 {
+			known = false
+			continue
+		}
+		if *field.configured != *field.actual {
+			return false, true
+		}
 	}
-	return servicePortsMatch(selected, port, sourcePort)
+	return true, known
 }
 
 type builtinService struct {
@@ -1777,26 +1867,69 @@ func portInRanges(value string, port int) bool {
 
 func normalizeProtocol(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	switch value {
-	case "any", "all":
-		return "any"
-	case "6":
-		return "tcp"
-	case "17":
-		return "udp"
-	case "132":
-		return "sctp"
-	case "1":
-		return "icmp"
-	case "tcp", "udp", "sctp", "icmp":
-		return value
-	default:
-		number, err := strconv.Atoi(value)
-		if err == nil && number >= 1 && number <= 255 {
+	if number, err := strconv.Atoi(value); err == nil {
+		switch number {
+		case 6:
+			return "tcp"
+		case 17:
+			return "udp"
+		case 132:
+			return "sctp"
+		case 1:
+			return "icmp"
+		case 58:
+			return "icmpv6"
+		}
+		if number >= 1 && number <= 255 {
 			return strconv.Itoa(number)
 		}
 		return ""
 	}
+	switch value {
+	case "any", "all":
+		return "any"
+	case "icmp6", "icmpv6", "ipv6-icmp":
+		return "icmpv6"
+	case "tcp", "udp", "sctp", "icmp":
+		return value
+	default:
+		return ""
+	}
+}
+
+func isICMP(protocol string) bool {
+	return protocol == "icmp" || protocol == "icmpv6"
+}
+
+func flowProtocol(value string, ipv6 bool) (string, error) {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return "", nil
+	}
+	protocol := normalizeProtocol(raw)
+	if protocol == "" {
+		return "", fmt.Errorf("unsupported protocol %q; use tcp, udp, sctp, icmp, icmpv6, any, or a number from 1 to 255", raw)
+	}
+	if ipv6 && strings.EqualFold(raw, "icmp") {
+		return "icmpv6", nil
+	}
+	if protocol == "icmp" && ipv6 || protocol == "icmpv6" && !ipv6 {
+		return "", fmt.Errorf("protocol %q does not match the flow's IP version", raw)
+	}
+	return protocol, nil
+}
+
+func validateICMP(protocol string, icmpType, icmpCode *int) error {
+	if !isICMP(protocol) && (icmpType != nil || icmpCode != nil) {
+		return fmt.Errorf("icmp_type and icmp_code require ICMP or ICMPv6")
+	}
+	if icmpType != nil && (*icmpType < 0 || *icmpType > 255) {
+		return fmt.Errorf("icmp_type must be between 0 and 255")
+	}
+	if icmpCode != nil && (*icmpCode < 0 || *icmpCode > 255) {
+		return fmt.Errorf("icmp_code must be between 0 and 255")
+	}
+	return nil
 }
 
 func bytesCompare(left, right net.IP) int {

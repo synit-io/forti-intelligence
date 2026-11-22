@@ -27,7 +27,7 @@ The identifiers and values below are fictional. Replace them with your verified 
 
 ## Behavior and limits
 
-Permitted resource prefixes are `/sys`, `/dvmdb`, `/pm`, `/task`, and `/securityconsole`; a leading slash is optional. ADOM-scoped paths obey the profile allowlist. Credential and administrator resources are blocked by the request controls.
+Permitted resource prefixes are `/sys`, `/dvmdb`, `/pm`, `/task`, and `/securityconsole`. A leading slash is optional. With a profile `adoms` allowlist, use `/sys/status` for appliance status or a resource path that names an allowed ADOM in its ADOM selector. Global ADOM and device collections and task paths without ADOM scope are rejected. Use `inventory_status` to see configured ADOMs, or `/dvmdb/adom/<adom>/device` for device records in one ADOM. Credential and administrator resources are blocked by the request controls.
 
 Pass `data` for parameters such as `fields`, `filter`, `loadsub`, `option`, or `range` when supported by the target resource. This tool reads existing state; it does not run tasks or change configuration.
 

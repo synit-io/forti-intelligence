@@ -22,9 +22,13 @@ func constrainToolSchema(tool string, schema *jsonschema.Schema) {
 	case "lookup_firewall_policy":
 		bound("source_port", 0, 65535)
 		bound("destination_port", 1, 65535)
+		bound("icmp_type", 0, 255)
+		bound("icmp_code", 0, 255)
 	case "investigate_traffic", "resolve_route":
 		bound("source_port", 0, 65535)
 		bound("destination_port", 0, 65535)
+		bound("icmp_type", 0, 255)
+		bound("icmp_code", 0, 255)
 		if p := schema.Properties["detail"]; p != nil {
 			p.Enum = []any{"", "full", "compact"}
 		}

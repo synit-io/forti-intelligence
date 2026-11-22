@@ -2,6 +2,7 @@ package fortinet
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -62,6 +63,11 @@ func categoryReferenceString(value any) string {
 		return strconv.Itoa(int(typed))
 	case int:
 		return strconv.Itoa(typed)
+	case json.Number:
+		if id, ok := ParseJSONInt(typed); ok {
+			return strconv.Itoa(id)
+		}
+		return typed.String()
 	default:
 		return strings.TrimSpace(stringValueValue(typed))
 	}

@@ -384,6 +384,74 @@ func TestFortiAnalyzerReusesAnIdenticalSearch(t *testing.T) {
 	}
 }
 
+func TestFortiAnalyzerMissingTaskAllowsFreshSearch(t *testing.T) {
+	for _, mode := range []string{"explicit task", "reused task", "first poll"} {
+		t.Run(mode, func(t *testing.T) {
+			var submits atomic.Int32
+			var missing atomic.Bool
+			missing.Store(mode == "first poll")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, param := decodeRPC(t, r)
+				var result map[string]any
+				switch resource := param["url"]; resource {
+				case "/logview/adom/test-adom-primary/logsearch":
+					result = map[string]any{"tid": submits.Add(1)}
+				case "/logview/adom/test-adom-primary/logsearch/1":
+					if missing.Load() {
+						result = map[string]any{"status": map[string]any{"code": -3, "message": "Task does not exist"}}
+						break
+					}
+					fallthrough
+				case "/logview/adom/test-adom-primary/logsearch/2":
+					result = map[string]any{"percentage": 100, "data": []any{}}
+				default:
+					t.Errorf("unexpected resource %v", resource)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"result": result})
+			}))
+			defer server.Close()
+			client, err := NewFortiAnalyzer(apiKeyProfile("faz", config.ProductFortiAnalyzer, server.URL))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			start := time.Date(2026, 9, 22, 14, 5, 0, 0, time.UTC)
+			query := LogSearchRequest{StartTime: start, EndTime: start.Add(time.Hour), Filter: "srcip=10.0.0.1"}
+			result, err := client.SearchLogs(ctx, query)
+			if mode != "first poll" {
+				if err != nil || result.TaskID != "1" {
+					t.Fatalf("first search = %#v, %v", result, err)
+				}
+				missing.Store(true)
+				request := query
+				if mode == "explicit task" {
+					request = LogSearchRequest{TaskID: "1"}
+				}
+				result, err = client.SearchLogs(ctx, request)
+			}
+			if DescribeError(err).Kind != ErrorKindNotFound || result.TaskID != "1" || !result.StartTime.Equal(start) {
+				t.Fatalf("missing search = %#v, %v", result, err)
+			}
+			fresh, err := client.SearchLogs(ctx, query)
+			if err != nil || fresh.TaskID != "2" || fresh.Resumed || submits.Load() != 2 {
+				t.Fatalf("fresh search = %#v, %v, submits=%d", fresh, err, submits.Load())
+			}
+		})
+	}
+}
+
+func TestMissingSearchInvalidationPreservesReplacement(t *testing.T) {
+	client := &FortiAnalyzer{}
+	older := client.rememberSearch("1", submittedSearch{identity: "older"})
+	newer := client.rememberSearch("1", submittedSearch{identity: "newer"})
+	client.disableMissingSearchReuse("1", older, newRPCFailure(ErrorInfo{Kind: ErrorKindNotFound}, nil))
+	client.disableMissingSearchReuse("1", newer, newRPCFailure(ErrorInfo{Kind: ErrorKindNotFound, HTTPStatus: http.StatusServiceUnavailable}, nil))
+	client.disableMissingSearchReuse("1", newer, newRPCFailure(ErrorInfo{Kind: ErrorKindPermission}, nil))
+	if id, search := client.findRecentSearch("newer"); id != "1" || search != newer {
+		t.Fatal("replacement lost after stale or ambiguous failure")
+	}
+}
+
 func TestFortiAnalyzerSearchFallsBackToLegacyTimeFormat(t *testing.T) {
 	var ranges []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

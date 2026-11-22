@@ -86,13 +86,6 @@ func (c *FortiManager) validateADOM(adom string) error {
 	return fmt.Errorf("ADOM %q is not configured for FortiManager profile %q", adom, c.Name())
 }
 
-func (c *FortiManager) validateResourceADOM(resource string) error {
-	if adom, ok := resourceADOM(resource); ok {
-		return c.validateADOM(adom)
-	}
-	return nil
-}
-
 func (c *FortiManager) ListADOMs(ctx context.Context) ([]ADOM, error) {
 	if len(c.rpc.profile.ADOMs) > 0 {
 		// An explicit allowlist is authoritative. Do not discover every ADOM
@@ -1099,23 +1092,32 @@ func (c *FortiManager) proxyCallTimeout(ctx context.Context, adom, device, vdom,
 }
 
 func (c *FortiManager) PolicyLookup(ctx context.Context, adom, device, vdom string, request PolicyLookupRequest) (ProxyResult, error) {
+	protocol, err := protocolNumber(request.Protocol)
+	if err != nil {
+		return ProxyResult{}, err
+	}
 	values := url.Values{}
 	values.Set("srcintf", request.SourceInterface)
 	values.Set("sourceip", request.SourceIP)
 	values.Set("dest", request.DestinationIP)
-	values.Set("destport", strconv.Itoa(request.DestinationPort))
 	values.Set("policy_type", "policy")
 	sourceIP := net.ParseIP(strings.TrimSpace(request.SourceIP))
 	values.Set("ipv6", strconv.FormatBool(sourceIP != nil && sourceIP.To4() == nil))
 	if vdom != "" {
 		values.Set("vdom", vdom)
 	}
-	if request.SourcePort > 0 {
-		values.Set("sourceport", strconv.Itoa(request.SourcePort))
-	}
-	protocol, err := protocolNumber(request.Protocol)
-	if err != nil {
-		return ProxyResult{}, err
+	if protocol == 1 || protocol == 58 {
+		if request.ICMPType != nil {
+			values.Set("icmptype", strconv.Itoa(*request.ICMPType))
+		}
+		if request.ICMPCode != nil {
+			values.Set("icmpcode", strconv.Itoa(*request.ICMPCode))
+		}
+	} else {
+		values.Set("destport", strconv.Itoa(request.DestinationPort))
+		if request.SourcePort > 0 {
+			values.Set("sourceport", strconv.Itoa(request.SourcePort))
+		}
 	}
 	values.Set("protocol", strconv.Itoa(protocol))
 	resource := "/api/v2/monitor/firewall/policy-lookup/?" + values.Encode()
@@ -1123,12 +1125,12 @@ func (c *FortiManager) PolicyLookup(ctx context.Context, adom, device, vdom stri
 }
 
 func (c *FortiManager) Read(ctx context.Context, resource string, data map[string]any) (any, error) {
-	if err := c.validateResourceADOM(resource); err != nil {
+	if err := ValidateReadScope(resource, len(c.rpc.profile.ADOMs) > 0, c.validateADOM); err != nil {
 		return nil, err
 	}
 	param := map[string]any{"url": normalizeRPCPath(resource)}
 	for key, value := range data {
-		if key != "url" {
+		if !strings.EqualFold(key, "url") {
 			param[key] = value
 		}
 	}
@@ -1162,6 +1164,8 @@ func protocolNumber(protocol string) (int, error) {
 		return 132, nil
 	case "icmp":
 		return 1, nil
+	case "icmp6", "icmpv6", "ipv6-icmp":
+		return 58, nil
 	default:
 		return 0, fmt.Errorf("unsupported protocol %q", protocol)
 	}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -36,6 +37,73 @@ func TestReadResourceValidationNormalizesAndExplains(t *testing.T) {
 		}
 		if err != nil || got != testCase.want {
 			t.Errorf("validate(%q) = %q, %v; want %q", testCase.input, got, err, testCase.want)
+		}
+	}
+}
+
+func TestGenericReadsRequireADOMOnRestrictedProfiles(t *testing.T) {
+	manager := &countingToolManager{fakeManager: &fakeManager{name: "fmg"}}
+	analyzer := &countingAnalyzer{}
+	cfg := config.Default()
+	cfg.Profiles = []config.ProfileConfig{
+		{Name: "fmg", Product: config.ProductFortiManager, ADOMs: []string{"allowed ADOM"}},
+		{Name: "faz", Product: config.ProductFortiAnalyzer, ADOMs: []string{"allowed ADOM"}},
+	}
+	app := New(cfg, nil, map[string]fortinet.Manager{"fmg": manager}, map[string]fortinet.Analyzer{"faz": analyzer})
+	for _, tc := range []struct {
+		name    string
+		read    func(context.Context, string, string, map[string]any) (any, error)
+		blocked []string
+		allowed []string
+		calls   func() int
+	}{
+		{"fmg", app.GetFortiManagerRead,
+			[]string{"/pm/config/device/edge/vdom/root", "/securityconsole/package/status", "/pm/config/global/obj/firewall/address"},
+			[]string{"/pm/config/adom/allowed%20ADOM/obj/firewall/address/name%2Fpart", "/pm/pkg/adom/allowed%20ADOM"},
+			func() int { return len(manager.reads) }},
+		{"faz", app.FortiAnalyzerRead,
+			[]string{"/logview/logs", "/report/status", "/eventmgmt/event", "/incidents/list"},
+			[]string{"/logview/adom/allowed%20ADOM/logstats", "/logview/adom/allowed%20ADOM/logsearch/5"},
+			func() int { return int(analyzer.reads.Load()) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			for _, resource := range append(tc.blocked, "/dvmdb/device", "/dvmdb/adom", "/sys/device/adom/allowed%20ADOM", "/task/task/1", "/dvmdb/adom/denied/device", "/dvmdb/adom/allowed%20ADOM%2Fdevice", "/dvmdb/adom/allowed%20ADOM/%2e%2e/device", "/dvmdb/adom/allowed%20ADOM%20/device") {
+				if _, err := tc.read(ctx, tc.name, resource, map[string]any{"adom": "allowed ADOM"}); err == nil {
+					t.Errorf("restricted read of %q succeeded", resource)
+				}
+			}
+			if got := tc.calls(); got != 0 {
+				t.Fatalf("%d restricted requests reached the client", got)
+			}
+			for _, resource := range append(tc.allowed, "/sys/status?fields=version", "/dvmdb/adom/allowed%20ADOM/device") {
+				if _, err := tc.read(ctx, tc.name, resource, nil); err != nil {
+					t.Fatalf("allowed read of %q failed: %v", resource, err)
+				}
+			}
+			if got := tc.calls(); got != len(tc.allowed)+2 {
+				t.Fatalf("client received %d allowed requests", got)
+			}
+		})
+	}
+
+	for i := range cfg.Profiles {
+		cfg.Profiles[i].ADOMs = nil
+	}
+	app = New(cfg, nil, map[string]fortinet.Manager{"fmg": manager}, map[string]fortinet.Analyzer{"faz": analyzer})
+	if _, err := app.GetFortiManagerRead(context.Background(), "fmg", "/dvmdb/adom", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.FortiAnalyzerRead(context.Background(), "faz", "/dvmdb/device", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLivePolicyIDPreservesRPCInteger(t *testing.T) {
+	for _, number := range []any{json.Number("7"), json.Number("7.0"), float64(7)} {
+		data := []any{map[string]any{"results": map[string]any{"policy_id": number}}}
+		if got := livePolicyID(data); got == nil || *got != 7 {
+			t.Fatalf("livePolicyID(%v) = %v, want 7", number, got)
 		}
 	}
 }

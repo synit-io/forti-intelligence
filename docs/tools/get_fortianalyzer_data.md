@@ -27,7 +27,7 @@ The identifiers and values below are fictional. Replace them with your verified 
 
 ## Behavior and limits
 
-Accepted prefixes are `/sys`, `/dvmdb`, `/task`, `/logview`, `/fortiview`, `/report`, `/event`, `/eventmgmt`, and `/incidents`. ADOM-scoped paths must belong to the profile's allowlist. No task or configuration change is requested by this tool.
+Accepted prefixes are `/sys`, `/dvmdb`, `/task`, `/logview`, `/fortiview`, `/report`, `/event`, `/eventmgmt`, and `/incidents`. With a profile `adoms` allowlist, use `/sys/status` for appliance status or a resource path that names an allowed ADOM in its ADOM selector. Use `/dvmdb/adom/<adom>/device` instead of the global device or ADOM collection. Generic task, report, event, and incident reads require an ADOM-scoped path on these profiles.
 
 `data` passes supported GET parameters such as `limit`, `offset`, `devtype`, `logtype`, `filter`, or `time-range`. Resource support and response fields depend on the analyzer release.
 

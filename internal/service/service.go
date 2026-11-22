@@ -757,10 +757,11 @@ func (s *Service) GetFortiManagerRead(ctx context.Context, profile, resource str
 	if err != nil {
 		return nil, err
 	}
-	if adom, ok := resourceADOM(resource); ok {
-		if err := s.validateManagerADOM(manager, adom); err != nil {
-			return nil, err
-		}
+	configured, _ := s.cfg.Profile(manager.Name(), config.ProductFortiManager)
+	if err := fortinet.ValidateReadScope(resource, len(configured.ADOMs) > 0, func(adom string) error {
+		return s.validateManagerADOM(manager, adom)
+	}); err != nil {
+		return nil, err
 	}
 	ctx, cancel := s.withTimeout(ctx)
 	defer cancel()
@@ -1241,10 +1242,11 @@ func (s *Service) FortiAnalyzerRead(ctx context.Context, profile, resource strin
 	if err != nil {
 		return nil, err
 	}
-	if adom, ok := resourceADOM(resource); ok {
-		if err := s.validateAnalyzerADOM(analyzer, adom); err != nil {
-			return nil, err
-		}
+	configured, _ := s.cfg.Profile(analyzer.Name(), config.ProductFortiAnalyzer)
+	if err := fortinet.ValidateReadScope(resource, len(configured.ADOMs) > 0, func(adom string) error {
+		return s.validateAnalyzerADOM(analyzer, adom)
+	}); err != nil {
+		return nil, err
 	}
 	ctx, cancel := s.withTimeout(ctx)
 	defer cancel()
@@ -1559,25 +1561,6 @@ func (s *Service) validateAnalyzerADOM(analyzer fortinet.Analyzer, adom string) 
 		return fmt.Errorf("ADOM %q is not configured for FortiAnalyzer profile %q", adom, analyzer.Name())
 	}
 	return nil
-}
-
-func resourceADOM(resource string) (string, bool) {
-	parsed, err := url.Parse(resource)
-	if err != nil {
-		return "", false
-	}
-	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	for index := 0; index+1 < len(parts); index++ {
-		if !strings.EqualFold(parts[index], "adom") {
-			continue
-		}
-		adom, err := url.PathUnescape(parts[index+1])
-		if err != nil {
-			adom = parts[index+1]
-		}
-		return adom, adom != ""
-	}
-	return "", false
 }
 
 func (s *Service) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {

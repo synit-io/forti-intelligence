@@ -19,6 +19,8 @@ type InvestigateInput struct {
 	DestinationIP   string
 	DestinationPort int
 	Protocol        string
+	ICMPType        *int
+	ICMPCode        *int
 	SourcePort      int
 	SourceInterface string
 	Profile         string
@@ -65,7 +67,8 @@ func (s *Service) Investigate(ctx context.Context, input InvestigateInput) (Inve
 	input.SourceIP = strings.TrimSpace(input.SourceIP)
 	input.DestinationIP = strings.TrimSpace(input.DestinationIP)
 	input.URL = strings.TrimSpace(input.URL)
-	if net.ParseIP(input.SourceIP) == nil {
+	sourceIP := net.ParseIP(input.SourceIP)
+	if sourceIP == nil {
 		return InvestigateOutput{}, fmt.Errorf("source_ip must be an IPv4 or IPv6 address")
 	}
 	if input.DestinationIP == "" {
@@ -76,6 +79,17 @@ func (s *Service) Investigate(ctx context.Context, input InvestigateInput) (Inve
 	}
 	if input.SourcePort < 0 || input.SourcePort > 65535 {
 		return InvestigateOutput{}, fmt.Errorf("source_port must be between 0 and 65535")
+	}
+	protocol, err := flowProtocol(input.Protocol, sourceIP.To4() == nil)
+	if err != nil {
+		return InvestigateOutput{}, err
+	}
+	if err := validateICMP(protocol, input.ICMPType, input.ICMPCode); err != nil {
+		return InvestigateOutput{}, err
+	}
+	if isICMP(protocol) {
+		input.Protocol = protocol
+		input.SourcePort, input.DestinationPort = 0, 0
 	}
 
 	output := InvestigateOutput{Input: &input}
@@ -116,7 +130,7 @@ func (s *Service) Investigate(ctx context.Context, input InvestigateInput) (Inve
 		}
 	}
 
-	if input.DestinationPort == 0 {
+	if input.DestinationPort == 0 && !isICMP(protocol) {
 		output.Warnings = append(output.Warnings, "destination_port was omitted, so the firewall policy lookup was skipped")
 	} else if ctx.Err() == nil {
 		policyInput := PolicyLookupInput{
@@ -124,6 +138,7 @@ func (s *Service) Investigate(ctx context.Context, input InvestigateInput) (Inve
 			SourceIP: input.SourceIP, DestinationIP: input.DestinationIP,
 			SourcePort: input.SourcePort, DestinationPort: input.DestinationPort,
 			Protocol: input.Protocol, SourceInterface: input.SourceInterface,
+			ICMPType: input.ICMPType, ICMPCode: input.ICMPCode,
 		}
 		if len(output.Hops) == 0 {
 			policy, policyErr := s.LookupPolicies(ctx, policyInput)
@@ -197,17 +212,18 @@ func (s *Service) Investigate(ctx context.Context, input InvestigateInput) (Inve
 				hop.Errors = append(hop.Errors, "web_filter: request deadline ended before this hop was evaluated")
 				continue
 			}
-			if hop.Policy != nil && len(hop.Policy.Decisions) == 1 {
-				action := hop.Policy.Decisions[0].Action
-				if action == "deny" || action == "implicit_deny" {
-					hop.Warnings = append(hop.Warnings, "Web filtering is skipped for this configured denial. Read the verdict's confidence and unresolved conditions before treating it as an effective block.")
-					continue
-				}
+			decision := sharedPolicyDecision(hop.Policy, hop.Route.Device)
+			if decision != nil && (decision.Action == "deny" || decision.Action == "implicit_deny") {
+				hop.Warnings = append(hop.Warnings, "Web filtering is skipped for this configured denial. Read the verdict's confidence and unresolved conditions before treating it as an effective block.")
+				continue
 			}
-			id := singlePolicyID(hop.Policy, hop.Route.Device)
+			id := 0
+			if decision != nil && hop.Policy.Complete {
+				id = decision.PolicyID
+			}
 			if id == 0 {
 				hop.Warnings = append(hop.Warnings, "No unique carrying policy is proven; web-filter results list candidate profiles on this scoped hop.")
-			} else if hop.Policy.Decisions[0].Confidence == "tentative" {
+			} else if decision.Confidence == "tentative" {
 				hop.Warnings = append(hop.Warnings, "The carrying policy is tentative; its web-filter decision is conditional on that policy applying.")
 			}
 			check, checkErr := s.CheckWebFilter(ctx, CheckWebFilterInput{
@@ -228,10 +244,7 @@ func (s *Service) Investigate(ctx context.Context, input InvestigateInput) (Inve
 	}
 
 	if input.IncludeLogs && ctx.Err() == nil {
-		logs, logErr := s.SearchLogs(ctx, input.LogProfile, fortinet.LogSearchRequest{
-			ADOM: input.LogADOM, LogType: "traffic", Filter: logFilter(input),
-			StartTime: input.LogStart, EndTime: input.LogEnd, Limit: 25,
-		})
+		logs, logErr := s.investigateLogs(ctx, input, &output)
 		if logErr != nil && !logResultUsable(logs) {
 			output.Errors = append(output.Errors, "logs: "+logErr.Error())
 		} else {
@@ -247,22 +260,30 @@ func (s *Service) Investigate(ctx context.Context, input InvestigateInput) (Inve
 	return output, nil
 }
 
-func singlePolicyID(policy *PolicyLookupOutput, device string) int {
-	if policy == nil || !policy.Complete {
-		return 0
+func sharedPolicyDecision(policy *PolicyLookupOutput, device string) *PolicyDecision {
+	if policy == nil {
+		return nil
 	}
-	id, count := 0, 0
-	for _, decision := range policy.Decisions {
+	var selected *PolicyDecision
+	for i := range policy.Decisions {
+		decision := &policy.Decisions[i]
 		if device != "" && decision.Device != device {
 			continue
 		}
-		count++
-		id = decision.PolicyID
+		if selected == nil {
+			selected = decision
+			continue
+		}
+		// Different protocols can identify the same carrying policy.
+		if decision.Profile != selected.Profile || decision.ADOM != selected.ADOM ||
+			decision.Device != selected.Device || decision.VDOM != selected.VDOM ||
+			decision.Package != selected.Package || decision.DestinationIP != selected.DestinationIP ||
+			decision.PolicyID != selected.PolicyID || decision.Action != selected.Action ||
+			decision.Confidence != selected.Confidence {
+			return nil
+		}
 	}
-	if count != 1 {
-		return 0
-	}
-	return id
+	return selected
 }
 
 func investigateHopLabel(hop InvestigateHop) string {
@@ -297,15 +318,4 @@ func emptyAny(value any) bool {
 	default:
 		return false
 	}
-}
-
-func logFilter(input InvestigateInput) string {
-	filter := "srcip=" + input.SourceIP
-	if net.ParseIP(input.DestinationIP) != nil {
-		filter += " and dstip=" + input.DestinationIP
-	}
-	if input.DestinationPort > 0 {
-		filter += " and dstport=" + strconv.Itoa(input.DestinationPort)
-	}
-	return filter
 }

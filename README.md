@@ -42,7 +42,7 @@ Forti Intelligence uses supported FortiManager and FortiAnalyzer JSON-RPC APIs. 
 | “Why can this client not reach that server?” | An ordered configured path, policy decisions at each supported hop, and matching incident logs when available. |
 | “Which firewall or network contains this IP?” | Scoped interface and zone candidates, package assignments, overlaps, and inventory freshness. |
 | “Why is this website blocked?” | Its FortiGuard category, URL-specific overrides, carrying policies, web-filter decisions, and SSL/SSH inspection settings. |
-| “Why does live behavior differ from FortiManager?” | Current lookup evidence, stored package installation state, available revision details, dynamic-routing neighbors, and SD-WAN health. |
+| “Why does live behavior differ from FortiManager?” | Policy decisions for the same protocol, the installed route for a destination, stored package installation state, revision details, routing neighbors, and SD-WAN health. |
 | “Was this flow translated, and who holds this address?” | Candidate NAT objects, current sessions, and DHCP, ARP, FSSO, or firewall-user records. Actual translation needs session or log evidence. |
 | “Are VPN, HA, or logging issues involved?” | Tunnel and login state, HA peer/checksum evidence, log-receipt information, and scoped appliance diagnostics. |
 | “Where is this policy object used?” | References in supported policy tables, live policy hits, and any gaps that prevent a complete usage conclusion. |

@@ -83,6 +83,8 @@ Every `profiles` entry is an independent named connection. Add as many FortiMana
 
 FortiManager profiles may set `adoms` to an array of permitted ADOM names. The allowlist applies to ADOM discovery, managed-device/interface/package/object/policy reads, proxy reads, and policy lookup. When it is set, the configured names are used directly and the server does not call `/dvmdb/adom` to discover unrelated ADOMs. Omit it to preserve unrestricted ADOM discovery. This is useful when FMG exposes product/default ADOMs that are not readable or do not contain FortiGates; those ADOMs are never sent to later inventory stages.
 
+On either FortiManager or FortiAnalyzer profiles with `adoms` set, generic reads accept `/sys/status` and paths explicitly scoped to an allowed ADOM. Use `/dvmdb/adom/<adom>/device` to read one ADOM's device list. Appliance-wide ADOM lists, device lists, tasks, and other tenant data without an ADOM path require a profile without an allowlist.
+
 This is a complete 1..N layout pattern:
 
 ```yaml

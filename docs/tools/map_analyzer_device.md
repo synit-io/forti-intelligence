@@ -32,7 +32,7 @@ The identifiers and values below are fictional. Replace them with your verified 
 
 ## Behavior and limits
 
-The tool compares the FortiGate serial, hostname, and name with analyzer device records, returning matching records and the identifier that matched. Inspect `matches` before choosing the logged name or serial for a log filter.
+The tool compares the FortiGate serial, hostname and name with all supported identity fields of each analyzer device record. It returns the matching records and the identifier that matched. Use the verified logged `devname` as `device` in a log search. A serial helps confirm the identity of the record.
 
 FortiManager and FortiAnalyzer profiles, ADOMs, and device names are separate scopes. `profile`/`adom` select FortiManager; `analyzer_profile`/`analyzer_adom` select FortiAnalyzer. If the analyzer profile has one permitted ADOM, it is used when omitted; an unrestricted profile falls back to `root`. A profile with several permitted ADOMs requires an explicit choice.
 

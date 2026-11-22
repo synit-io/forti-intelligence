@@ -11,9 +11,11 @@ Start a traffic investigation with ownership, an ordered configured path, and po
 | `detail` | string | No | `full` (default) or `compact`; compact removes duplicate first-hop/route-hop copies and raw live payloads while preserving diagnostic evidence. |
 | `source_ip` | string | Yes | Source IPv4 or IPv6 address of the flow |
 | `destination_ip` | string | Yes | Destination IP address or hostname |
-| `destination_port` | integer | No | Destination port. When set, the firewall policy lookup runs; when omitted, that step is skipped. |
-| `protocol` | string | No | tcp, udp, sctp, icmp, any, or an IP protocol number. When omitted the live policy lookup runs for TCP and UDP. |
-| `source_port` | integer | No | Source port for configured routing and service matching, and the live policy lookup. Omit only when unknown; source-port constraints then remain tentative. |
+| `destination_port` | integer | No | Destination port. Enables policy lookup for non-ICMP flows. Omit for ICMP and ICMPv6. |
+| `protocol` | string | No | tcp, udp, sctp, icmp, icmpv6, any, or an IP protocol number. Omitted or any evaluates TCP and UDP separately in policy lookup. |
+| `source_port` | integer | No | Source port for configured routing, service matching and live policy lookup. Omit when unknown or when the flow uses ICMP. |
+| `icmp_type` | integer | No | ICMP or ICMPv6 message type, 0–255, when known. |
+| `icmp_code` | integer | No | ICMP or ICMPv6 message code, 0–255, when known. |
 | `source_interface` | string | No | Ingress interface or zone when inventory cannot infer it |
 | `profile` | string | No | FortiManager profile name. All inventoried profiles are searched when omitted. |
 | `adom` | string | No | Limit candidates to one ADOM |
@@ -60,9 +62,9 @@ Oversized investigations return `isError: true`, `representation_truncated` and 
 
 The investigation evaluates downstream hops using the original flow tuple and states that limit. Verify NAT with sessions or logs, then repeat downstream lookups using the translated tuple. Configured routing and policy matches do not establish observed delivery or return-path symmetry.
 
-`source_ip` and `destination_ip` are required. A missing `destination_port` skips the policy step. Provide `source_port` and ingress when known, and keep unresolved scopes separate.
+`source_ip` and `destination_ip` are required. To investigate portless traffic, specify `protocol: "icmp"` or `protocol: "icmpv6"` and omit both ports. Set `icmp_type` and `icmp_code` when known. For other protocols, omitting `destination_port` skips the policy step. Provide ingress when known and keep unresolved scopes separate.
 
-`include_logs` adds a traffic search using the analyzer profile/ADOM and time window, defaulting to the last hour. It returns what finished before the request deadline; inspect errors and use the log `next_action` to continue. This does not replace separately mapped, per-hop searches with translated tuples. See the [flow guide](../use-cases.md) and [SYSTEM.md](../../SYSTEM.md) for that process.
+`include_logs` adds one traffic search with a 25-row budget, using the analyzer profile, ADOM and time window. The default window is the last hour. The search uses the source IP and the concrete destination IPs evaluated for the source's address family. Known source and destination ports and the numeric IP protocol constrain the filter. An unresolved destination skips the search and reports the gap. The tool uses a unique source-side analyzer `devname` and adds `vd` when the source VDOM is known. If either scope cannot be verified, warnings identify the broader search and the rows that need scope verification. The result retains partial task state and `next_action`. Search each downstream hop separately when the tuple may have changed. [Fortinet Log View API examples](https://community.fortinet.com/fortianalyzer-6/technical-tip-api-calls-to-search-logs-from-analytics-database-logview-in-fortianalyzer-188625) · [Flow guide](../use-cases.md)
 
 ## Related tools
 

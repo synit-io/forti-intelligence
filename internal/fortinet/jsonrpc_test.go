@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,6 +25,109 @@ func TestDescribeErrorClassifiesUnsupportedPolicyObjectPath(t *testing.T) {
 	}
 	if !strings.Contains(info.Hint, "list_firewall_policies") {
 		t.Fatalf("hint = %q, want policy-tool guidance", info.Hint)
+	}
+}
+
+func TestFortiManagerPolicyLookupSendsICMPTypeAndCodeWithoutPorts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, param := decodeRPC(t, r)
+		if param["url"] != "/sys/proxy/json" {
+			t.Errorf("resource = %q, want proxy endpoint", param["url"])
+		}
+		path := param["data"].(map[string]any)["resource"].(string)
+		parsed, err := url.Parse(path)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		query := parsed.Query()
+		if query.Get("protocol") != "58" || query.Get("ipv6") != "true" || query.Get("icmptype") != "128" ||
+			query.Get("icmpcode") != "0" || query.Has("sourceport") || query.Has("destport") {
+			t.Errorf("policy lookup parameters = %v", query)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": []any{map[string]any{"status": map[string]any{"code": 0}, "data": map[string]any{"policyid": 7}}}})
+	}))
+	defer server.Close()
+	client, err := NewFortiManager(apiKeyProfile("fmg", config.ProductFortiManager, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	messageType, code := 128, 0
+	if _, err := client.PolicyLookup(context.Background(), "test-adom-primary", "fgt", "root", PolicyLookupRequest{
+		SourceIP: "2001:db8:1::42", DestinationIP: "2001:db8:2::50", SourceInterface: "lan",
+		SourcePort: 34567, DestinationPort: 443, Protocol: "icmpv6", ICMPType: &messageType, ICMPCode: &code,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParseServicesPreservesICMPZeroAndIPProtocolNumber(t *testing.T) {
+	services := parseServices([]any{
+		map[string]any{"name": "echo-reply", "protocol": "ICMP", "icmptype": json.Number("0"), "icmpcode": json.Number("0")},
+		map[string]any{"name": "icmp-number", "protocol": "IP", "protocol-number": json.Number("58")},
+		map[string]any{"name": "unreadable-type", "protocol": "ICMP", "icmptype": "unreadable"},
+	})
+	if len(services) != 3 || services[0].ICMPType == nil || *services[0].ICMPType != 0 ||
+		services[0].ICMPCode == nil || *services[0].ICMPCode != 0 ||
+		services[1].ProtocolNumber == nil || *services[1].ProtocolNumber != 58 || services[1].ICMPType != nil ||
+		services[2].ICMPType == nil || *services[2].ICMPType != -1 {
+		t.Fatalf("services = %#v, want explicit zero and unreadable values distinct from omitted fields", services)
+	}
+}
+
+func TestRPCPreservesLargeIntegersInSingleAndBatchResults(t *testing.T) {
+	const tid = "9007199254740993"
+	const bytes = "18446744073709551615"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request, _ := decodeRPC(t, r)
+		var results []map[string]any
+		for _, param := range request["params"].([]any) {
+			results = append(results, map[string]any{
+				"url": param.(map[string]any)["url"], "status": map[string]any{"code": 0},
+				"data": map[string]any{"tid": json.Number(tid), "bytes": json.Number(bytes), "enabled": 1, "category": 52},
+			})
+		}
+		if err := json.NewEncoder(w).Encode(map[string]any{"result": results}); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+	client, err := NewFortiManager(apiKeyProfile("fmg", config.ProductFortiManager, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(result any) {
+		t.Helper()
+		record := dataFromResult(result)
+		if id := taskID(record); id != tid {
+			t.Fatalf("task ID = %q, want %q", id, tid)
+		}
+		encoded, err := json.Marshal(record)
+		if err != nil || !strings.Contains(string(encoded), `"bytes":`+bytes) {
+			t.Fatalf("record = %s, %v, want exact byte count", encoded, err)
+		}
+		if !boolValue(record.(map[string]any)["enabled"]) {
+			t.Fatal("numeric enabled flag was lost")
+		}
+		if category, ok := ParseCategoryReference(record.(map[string]any)["category"]); !ok || category != 52 {
+			t.Fatalf("category = %d, %v, want 52", category, ok)
+		}
+	}
+	params := []map[string]any{{"url": "/sys/status"}, {"url": "/dvmdb/adom"}}
+	result, err := client.rpc.post(context.Background(), "get", params[:1], "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(result)
+	items, err := client.rpc.postBatch(context.Background(), "get", params, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if item.Err != nil {
+			t.Fatal(item.Err)
+		}
+		check(item.Value)
 	}
 }
 
@@ -806,6 +910,9 @@ func TestFortiManagerADOMAllowlistFiltersInventoryAndBlocksReads(t *testing.T) {
 	}
 	if _, err := client.Read(context.Background(), "/pm/config/adom/test-adom-denied/obj/firewall/address", nil); err == nil || !strings.Contains(err.Error(), "not configured") {
 		t.Fatalf("Read() error = %v, want configured-ADOM rejection", err)
+	}
+	if _, err := client.Read(context.Background(), "/dvmdb/adom", nil); err == nil || !strings.Contains(err.Error(), "explicit ADOM") {
+		t.Fatalf("Read() error = %v, want global discovery rejection", err)
 	}
 
 	mu.Lock()

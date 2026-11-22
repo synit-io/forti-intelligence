@@ -12,18 +12,18 @@ Start with the [investigation flow guide](../use-cases.md) for task-oriented exa
 | --- | --- |
 | [`investigate_traffic`](investigate_traffic.md) | Start a traffic investigation with ownership, an ordered configured path, and policy evidence for each traced hop and destination. |
 | [`resolve_ip_ownership`](resolve_ip_ownership.md) | Find the FortiGate interfaces whose configured networks contain an IP address. Start here when the site, device, or VDOM is unknown. |
-| [`resolve_route`](resolve_route.md) | Explain the configured forwarding decision for a destination and follow the path across inventoried FortiGates. |
+| [`resolve_route`](resolve_route.md) | Follow the configured path or compare it with the installed route for one destination IP, FortiGate and VDOM. |
 | [`get_fortigate_interfaces`](get_fortigate_interfaces.md) | Inspect one FortiGate interface and zone inventory without dumping every managed device. |
 | [`get_routing_neighbors`](get_routing_neighbors.md) | Check BGP, OSPF, and SD-WAN SLA state when operational routing can differ from the configured path. |
 | [`get_nat_for_flow`](get_nat_for_flow.md) | Find configured central SNAT, IP pool, and VIP objects that mention a flow. |
-| [`get_firewall_sessions`](get_firewall_sessions.md) | Check a short slice of current firewall sessions for a flow, policy ID, or observed source translation. |
+| [`get_firewall_sessions`](get_firewall_sessions.md) | Find current sessions for a flow or policy and check observed source translation within the inspected sample. |
 | [`resolve_address_identity`](resolve_address_identity.md) | Find the DHCP, ARP, FSSO, or authenticated firewall-user records that mention an address now. |
 
 ## Policies, installation, and web inspection
 
 | Tool | When to use it |
 | --- | --- |
-| [`lookup_firewall_policy`](lookup_firewall_policy.md) | Find the configured first-match policy for a flow and compare it with bounded live FortiGate lookups. |
+| [`lookup_firewall_policy`](lookup_firewall_policy.md) | Find the first matching policy for a flow or ping and compare it with live lookups for the same protocol. |
 | [`list_firewall_policies`](list_firewall_policies.md) | Review the policy rows behind a decision, including rule order, addresses, services, and inspection references. |
 | [`list_policy_objects`](list_policy_objects.md) | Inspect address, service, VIP, IP pool, or other firewall objects referenced by a policy. |
 | [`get_policy_usage`](get_policy_usage.md) | Check live policy hit counts and locate policy references to an address, service, or SSL/SSH profile name. |

@@ -63,7 +63,7 @@ type rpcResponse struct {
 }
 
 type rpcError struct {
-	Code    any             `json:"code,omitempty"`
+	Code    json.RawMessage `json:"code,omitempty"`
 	Message string          `json:"message,omitempty"`
 	Data    json.RawMessage `json:"data,omitempty"`
 }
@@ -398,8 +398,8 @@ func (c *rpcClient) post(ctx context.Context, method string, params []map[string
 	if len(response.Result) == 0 || string(response.Result) == "null" {
 		return response.Result, nil
 	}
-	var result any
-	if err := json.Unmarshal(response.Result, &result); err != nil {
+	result, err := decodeRPCValue(response.Result)
+	if err != nil {
 		return nil, newRPCFailure(ErrorInfo{
 			Kind:    ErrorKindResponse,
 			Message: fmt.Sprintf("decode %s JSON-RPC result: %v", c.profile.Name, err),
@@ -526,8 +526,8 @@ func (c *rpcClient) postBatch(ctx context.Context, method string, params []map[s
 			return nil, newRPCFailure(ErrorInfo{Kind: ErrorKindResponse, Message: "JSON-RPC batch response cannot be matched uniquely to requested resources", Resource: envelope.URL}, nil)
 		}
 		seen[index] = true
-		var value any
-		if err := json.Unmarshal(raw, &value); err != nil {
+		value, err := decodeRPCValue(raw)
+		if err != nil {
 			items[index].Err = newRPCFailure(ErrorInfo{
 				Kind:    ErrorKindResponse,
 				Message: fmt.Sprintf("decode %s JSON-RPC batch item %d: %v", c.profile.Name, index, err),
@@ -633,7 +633,8 @@ func (c *rpcClient) postResponse(ctx context.Context, method string, params []ma
 		}, err)
 	}
 	if response.Error != nil {
-		code := codeFromValue(response.Error.Code)
+		value, _ := decodeRPCValue(response.Error.Code)
+		code := intValue(value)
 		info := classifyError(code, 0, response.Error.Message, nil)
 		info.Code = code
 		info.Resource = resource
@@ -811,12 +812,20 @@ func sessionFromResult(result any) string {
 	return ""
 }
 
+func decodeRPCValue(raw json.RawMessage) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	err := decoder.Decode(&value)
+	return value, err
+}
+
 func stringValue(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ""
 	}
-	var value any
-	if json.Unmarshal(raw, &value) != nil {
+	value, err := decodeRPCValue(raw)
+	if err != nil {
 		return ""
 	}
 	return stringValueValue(value)
@@ -912,19 +921,47 @@ func normalizeRPCPath(value string) string {
 	return path.Clean(value)
 }
 
-func resourceADOM(resource string) (string, bool) {
-	parts := strings.Split(strings.Trim(normalizeRPCPath(resource), "/"), "/")
-	for index := 0; index+1 < len(parts); index++ {
-		if !strings.EqualFold(parts[index], "adom") {
-			continue
-		}
-		adom, err := url.PathUnescape(parts[index+1])
-		if err != nil {
-			adom = parts[index+1]
-		}
-		return adom, adom != ""
+// ValidateReadScope checks the route's actual ADOM selector before a generic
+// read. A filter or an ADOM-like segment in an unrelated route does not scope it.
+func ValidateReadScope(resource string, restricted bool, validateADOM func(string) error) error {
+	resource = normalizeRPCPath(resource)
+	canonical, err := policyResourcePath(resource)
+	if err != nil {
+		return err
 	}
-	return "", false
+	if restricted && (strings.ContainsRune(canonical, '\\') || strings.ContainsRune(resource, '#')) {
+		return fmt.Errorf("resource %q contains an ambiguous path separator or fragment", resource)
+	}
+	pathPart, _, _ := strings.Cut(resource, "?")
+	parts := strings.Split(strings.TrimPrefix(pathPart, "/"), "/")
+	// Decode the route segments individually so an escaped slash cannot
+	// turn an unscoped route into an apparently scoped one.
+	for index := range min(len(parts), 4) {
+		parts[index], _ = url.PathUnescape(parts[index])
+	}
+	if len(parts) == 2 && parts[0] == "sys" && parts[1] == "status" {
+		return nil
+	}
+	adom := ""
+	if len(parts) >= 3 && strings.EqualFold(parts[1], "adom") {
+		switch strings.ToLower(parts[0]) {
+		case "dvmdb", "logview", "fortiview", "report", "event", "eventmgmt", "incidents":
+			adom = parts[2]
+		}
+	}
+	if len(parts) >= 4 && parts[0] == "pm" && (parts[1] == "config" || parts[1] == "pkg") && strings.EqualFold(parts[2], "adom") {
+		adom = parts[3]
+	}
+	if adom != "" {
+		if restricted && (strings.TrimSpace(adom) != adom || strings.ContainsAny(adom, "/?#")) {
+			return fmt.Errorf("ADOM %q in resource %q contains an ambiguous character", adom, resource)
+		}
+		return validateADOM(adom)
+	}
+	if restricted {
+		return fmt.Errorf("resource %q requires an explicit ADOM path on a profile with an ADOM allowlist; use a configured ADOM, for example /dvmdb/adom/<adom>/device", resource)
+	}
+	return nil
 }
 
 // fortiOSStatusHint explains the HTTP status a FortiGate returned inside a

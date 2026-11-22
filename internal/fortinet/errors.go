@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 )
 
@@ -190,22 +189,6 @@ func containsAny(value string, needles ...string) bool {
 		}
 	}
 	return false
-}
-
-func codeFromValue(value any) int {
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case int64:
-		return int(typed)
-	case float64:
-		return int(typed)
-	case string:
-		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
-		return parsed
-	default:
-		return 0
-	}
 }
 
 func errorWithResource(err error, resource string) error {

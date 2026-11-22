@@ -2,7 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,6 +22,7 @@ type deskManager struct {
 	objectReads    atomic.Int32
 	interfaceReads atomic.Int32
 	statusCalls    atomic.Int32
+	proxyOverride  func(string) (any, error)
 }
 
 func (m *deskManager) ListInterfaces(ctx context.Context, adom, device string) ([]fortinet.Interface, error) {
@@ -41,6 +46,11 @@ func (m *deskManager) PackageStatusBatch(_ context.Context, _ string, members []
 func (m *deskManager) ProxyGet(_ context.Context, adom, device, vdom, resource string) (fortinet.ProxyResult, error) {
 	m.proxyCalls.Add(1)
 	result := fortinet.ProxyResult{ADOM: adom, Device: device, VDOM: vdom, Resource: resource}
+	if m.proxyOverride != nil {
+		var err error
+		result.Data, err = m.proxyOverride(resource)
+		return result, err
+	}
 	switch {
 	case strings.Contains(resource, "/firewall/session"):
 		result.Data = []any{
@@ -112,7 +122,7 @@ func deskFixture(t *testing.T) (*Service, *deskManager, *focusAnalyzer) {
 			"test-adom-branch": {{Name: "pkg", OID: 42, Members: []fortinet.PackageMember{{Device: "fgt", VDOM: "root"}}}},
 		},
 		interfaces: map[string][]fortinet.Interface{
-			"test-adom-branch/fgt": {{Name: "lan", IP: "10.1.1.1/24", VDOM: "root"}},
+			"test-adom-branch/fgt": {{Name: "lan", IP: "10.1.1.1", Network: "10.1.1.0/24", VDOM: "root"}},
 		},
 		policies: map[string][]fortinet.FirewallPolicy{
 			"test-adom-branch/pkg": {{PolicyID: 4, Name: "lan", Status: "enable", Action: "accept", SourceAddresses: []string{"LAN-users"}, Services: []string{"HTTPS"}, SSLSSHProfile: "deep"}},
@@ -173,6 +183,119 @@ func TestMonitorReadsAreReusedAndSessionsAreNot(t *testing.T) {
 	}
 	if manager.proxyCalls.Load()-before != 2 {
 		t.Fatalf("session proxy calls = %d, want 2", manager.proxyCalls.Load()-before)
+	}
+}
+
+func TestSessionMonitorRequestsDeclaredFiltersAndChecksTheBoundedSample(t *testing.T) {
+	app, manager, _ := deskFixture(t)
+	manager.proxyOverride = func(resource string) (any, error) {
+		parsed, err := url.Parse(resource)
+		if err != nil {
+			return nil, err
+		}
+		for key, want := range map[string]string{
+			"source": "2001:db8::1", "destination": "2001:db8::2", "sourceport": "52000",
+			"destport": "443", "policyid": "7", "protocol": "tcp", "ip_version": "ipv6", "count": "2",
+		} {
+			if parsed.Query().Get(key) != want {
+				t.Errorf("monitor %s = %q, want %q", key, parsed.Query().Get(key), want)
+			}
+		}
+		return []any{map[string]any{"target": "fgt", "response": map[string]any{"results": map[string]any{"details": []any{
+			map[string]any{"saddr": "2001:db8:0::1", "daddr": "2001:db8::2", "sport": 52000, "dport": 443, "proto": "tcp", "policyid": 7},
+			map[string]any{"saddr": "2001:db8::1", "daddr": "2001:db8::2", "sport": 52000, "dport": 443, "proto": "udp", "policyid": 7},
+			map[string]any{"saddr": "2001:db8::1", "daddr": "2001:db8::2", "sport": 52000, "dport": 443, "proto": 6, "policyid": 7},
+		}}}}}, nil
+	}
+	value, err := app.GetFirewallSessions(context.Background(), SessionQuery{
+		DeviceScope: DeviceScope{Device: "fgt"}, SourceIP: "2001:db8::1", DestinationIP: "2001:db8::2",
+		SourcePort: 52000, DestinationPort: 443, Protocol: "6", PolicyID: 7, Count: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := value.(map[string]any)
+	if result["received"] != 3 || result["inspected"] != 2 || result["returned"] != 1 || result["sampled"] != true || result["limit_reached"] != true || result["appliance_filter_status"] != "not_fully_applied" {
+		t.Fatalf("sample = %#v", result)
+	}
+	manager.proxyOverride = func(string) (any, error) { return []any{}, nil }
+	empty, err := app.GetFirewallSessions(context.Background(), SessionQuery{DeviceScope: DeviceScope{Device: "fgt"}, PolicyID: 7})
+	if err != nil || empty.(map[string]any)["inspected"] != 0 || empty.(map[string]any)["appliance_filter_status"] != "unverified" {
+		t.Fatalf("empty sample = %#v, %v", empty, err)
+	}
+	manager.proxyOverride = func(string) (any, error) { return map[string]any{"status": "success", "vdom": "root"}, nil }
+	metadata, err := app.GetFirewallSessions(context.Background(), SessionQuery{DeviceScope: DeviceScope{Device: "fgt"}})
+	if err == nil || metadata != nil {
+		t.Fatalf("metadata-only sample = %#v, %v", metadata, err)
+	}
+}
+
+func TestSessionMonitorOnlyBroadensAfterFortiGateRejectsFilters(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+	}{
+		{"bad parameters", http.StatusBadRequest},
+		{"permission denied", http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var filtered, broadened atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var call struct {
+					ID     any
+					Params []struct {
+						Data struct{ Resource string }
+					}
+				}
+				if err := json.NewDecoder(r.Body).Decode(&call); err != nil || len(call.Params) != 1 {
+					t.Errorf("decode request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				query, err := url.Parse(call.Params[0].Data.Resource)
+				if err != nil {
+					t.Errorf("proxy resource: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				status := map[string]any{"code": 0}
+				response := map[string]any{"results": []any{map[string]any{"src": "10.1.1.2", "dst": "192.0.2.1"}}}
+				if query.Query().Has("source") {
+					filtered.Add(1)
+					status = map[string]any{"code": -6, "message": test.name}
+					response = map[string]any{"http_status": test.status, "status": "error"}
+				} else {
+					broadened.Add(1)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": call.ID, "result": []any{map[string]any{
+					"status": map[string]any{"code": 0}, "url": "/sys/proxy/json",
+					"data": []any{map[string]any{"target": "fgt", "status": status, "response": response}},
+				}}})
+			}))
+			defer server.Close()
+			profile := config.ProfileConfig{Name: "fmg", Product: config.ProductFortiManager, URL: server.URL, APIKey: "test-key", AllowInsecureHTTP: true, ADOMs: []string{"test-adom-branch"}}
+			manager, err := fortinet.NewFortiManager(profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := config.Default()
+			cfg.Profiles = []config.ProfileConfig{profile}
+			app := New(cfg, nil, map[string]fortinet.Manager{"fmg": manager}, nil)
+			query := SessionQuery{DeviceScope: DeviceScope{Profile: "fmg", Device: "fgt", ADOM: "test-adom-branch"}, SourceIP: "10.1.1.2"}
+			value, err := app.GetFirewallSessions(context.Background(), query)
+			if test.status == http.StatusBadRequest {
+				if err != nil || value.(map[string]any)["appliance_filter_status"] != "rejected" || value.(map[string]any)["returned"] != 1 || filtered.Load() != 1 || broadened.Load() != 1 {
+					t.Fatalf("fallback result = %#v, %v (%d filtered, %d broader)", value, err, filtered.Load(), broadened.Load())
+				}
+			} else if err == nil || filtered.Load() == 0 || broadened.Load() != 0 {
+				t.Fatalf("denied result = %#v, %v (%d filtered, %d broader)", value, err, filtered.Load(), broadened.Load())
+			}
+			before := filtered.Load() + broadened.Load()
+			query.ADOM = "outside-allowed-scope"
+			if _, err := app.GetFirewallSessions(context.Background(), query); err == nil || filtered.Load()+broadened.Load() != before {
+				t.Fatalf("scope must be checked before the proxy: %v", err)
+			}
+		})
 	}
 }
 
@@ -281,7 +404,9 @@ func TestNATPolicyHistoryAndSSLUseCachedReads(t *testing.T) {
 }
 
 type focusAnalyzer struct {
-	reads []string
+	reads   []string
+	devices []map[string]any
+	search  func(fortinet.LogSearchRequest) (fortinet.LogSearchResult, error)
 }
 
 func (a *focusAnalyzer) Name() string { return "faz" }
@@ -289,6 +414,9 @@ func (a *focusAnalyzer) Status(context.Context) (any, error) {
 	return map[string]any{"version": "7.6"}, nil
 }
 func (a *focusAnalyzer) SearchLogs(_ context.Context, request fortinet.LogSearchRequest) (fortinet.LogSearchResult, error) {
+	if a.search != nil {
+		return a.search(request)
+	}
 	return fortinet.LogSearchResult{
 		Profile: "faz", ADOM: request.ADOM, Device: request.Device, LogType: request.LogType, Filter: request.Filter,
 		TaskID: "9", Count: 2, TotalCount: 4, Limit: request.Limit, Complete: true,
@@ -300,7 +428,10 @@ func (a *focusAnalyzer) Read(_ context.Context, resource string, _ map[string]an
 	if strings.Contains(resource, "/logsearch/count/") {
 		return map[string]any{"matched": 4}, nil
 	}
-	return []any{map[string]any{"devname": "edge-log", "sn": "FGT123", "name": "edge-log"}}, nil
+	if a.devices != nil {
+		return a.devices, nil
+	}
+	return []any{map[string]any{"devname": "edge-log", "sn": "FGT-CLUSTER", "serial": "FGT123", "name": "edge-log"}}, nil
 }
 func (a *focusAnalyzer) Close() error { return nil }
 
@@ -328,7 +459,7 @@ func TestCountAndDeviceMapOmitRows(t *testing.T) {
 	if mapped.(map[string]any)["analyzer_adom"] != "test-adom-analyzer" || mapped.(map[string]any)["analyzer_adom_source"] != "configured" || len(matches) != 1 {
 		t.Fatalf("map = %#v", mapped)
 	}
-	receipt, err := app.GetLogReceipt(context.Background(), LogReceiptQuery{Device: "edge-log"})
+	receipt, err := app.GetLogReceipt(context.Background(), LogReceiptQuery{Device: "fgt123"})
 	if err != nil {
 		t.Fatal(err)
 	}

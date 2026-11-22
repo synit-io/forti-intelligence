@@ -42,11 +42,13 @@ The identifiers and values below are fictional. Replace them with your verified 
 
 ## Behavior and limits
 
-The FortiGate is asked for `count` rows (default 50, at most 200); filters are then applied locally because FortiOS may ignore session filters. `filtered_locally` is true, and `requested` and `returned` describe this slice.
+The FortiGate is asked for `count` rows (default 50, at most 200). The request sends applicable filters using the `/firewall/session` monitor's `source`, `destination`, `sourceport`, `destport`, `policyid`, and supported protocol names (`tcp`, `udp`, `icmp`, `igmp`). An IPv6 address or ICMPv6 selects an IPv6 sample. All requested fields are checked locally. Other protocol numbers are checked only locally. Firmware support for the endpoint and request parameters varies. [Fortinet monitor reference](https://ansible-galaxy-fortios-docs.readthedocs.io/en/latest/fortios_monitor_fact.html)
+
+`requested` is the row budget, `received` is the number of rows the monitor sent, `inspected` is the number checked locally within that budget, and `returned` is the count that matched. `unreadable_rows` counts malformed or out-of-VDOM rows encountered. `appliance_filter_status` is `unverified` when the inspected rows cannot establish appliance filtering, `not_fully_applied` when a returned field conflicts with a sent filter, `rejected` when the appliance declined the filtered request and the tool retrieved a sample without filters, or `not_requested` when no filter was sent. `sampled` stays true even when `limit_reached` is false. Fortinet documents that its session monitors can omit sessions visible elsewhere. [Fortinet session monitor coverage](https://community.fortinet.com/fortinac-f-57/troubleshooting-tip-fortinac-ui-missing-firewall-sessions-from-fortigate-203089)
 
 Rows preserve source/destination addresses and ports, protocol, policy ID, source NAT (SNAT), duration, and bytes when available. Use a returned session to establish the tuple seen on that device at the read time.
 
-An empty slice does not prove no session exists: a matching row may be beyond the first requested rows, or the incident session may already have ended. Raise `count` within its cap, scope by `policy_id`, or inspect incident logs. Do not infer every NAT transformation or a completed application exchange from one short session row.
+A short or empty sample leaves other sessions unverified. A matching row may be beyond the requested budget, or the incident session may already have ended. Raise `count` within its cap or inspect incident logs. A returned row may show source translation and some traffic counters.
 
 ## Related tools
 

@@ -35,7 +35,7 @@ func TestStreamableHTTPNegotiatesMCP20260728AndListsTools(t *testing.T) {
 		t.Fatalf("NegotiatedProtocolVersion = %q, want 2026-07-28", got)
 	}
 	instructions := session.InitializeResult().Instructions
-	for _, guidance := range []string{"numbered path", "path.end", "every traced hop and destination", "return-path"} {
+	for _, guidance := range []string{"numbered path", "path.end", "every traced hop and destination", "return-path", "icmp_type and icmp_code"} {
 		if !strings.Contains(instructions, guidance) {
 			t.Errorf("advertised instructions omit %q", guidance)
 		}
@@ -76,6 +76,18 @@ func TestStreamableHTTPNegotiatesMCP20260728AndListsTools(t *testing.T) {
 					t.Errorf("%s schema omits %s", tool.Name, field)
 				}
 			}
+			if tool.Name == "investigate_traffic" {
+				for _, field := range []string{"icmp_type", "icmp_code"} {
+					if _, exists := schema.Properties[field]; !exists {
+						t.Errorf("%s schema omits %s", tool.Name, field)
+					}
+				}
+			}
+			if tool.Name == "resolve_route" {
+				if _, exists := schema.Properties["live"]; !exists {
+					t.Error("resolve_route schema omits live")
+				}
+			}
 		}
 		if tool.Name == "resolve_ip_ownership" {
 			seenOwnership = true
@@ -87,12 +99,13 @@ func TestStreamableHTTPNegotiatesMCP20260728AndListsTools(t *testing.T) {
 				t.Fatalf("marshal lookup schema: %v", err)
 			}
 			var schema struct {
-				Required []string `json:"required"`
+				Required   []string       `json:"required"`
+				Properties map[string]any `json:"properties"`
 			}
 			if err := json.Unmarshal(encoded, &schema); err != nil {
 				t.Fatalf("decode lookup schema: %v", err)
 			}
-			for _, required := range []string{"source_ip", "destination_ip", "destination_port"} {
+			for _, required := range []string{"source_ip", "destination_ip"} {
 				found := false
 				for _, value := range schema.Required {
 					if value == required {
@@ -101,6 +114,16 @@ func TestStreamableHTTPNegotiatesMCP20260728AndListsTools(t *testing.T) {
 				}
 				if !found {
 					t.Errorf("lookup schema required fields = %#v, missing %q", schema.Required, required)
+				}
+			}
+			for _, value := range schema.Required {
+				if value == "destination_port" {
+					t.Error("lookup schema requires a destination_port for ICMP")
+				}
+			}
+			for _, field := range []string{"destination_port", "icmp_type", "icmp_code"} {
+				if _, exists := schema.Properties[field]; !exists {
+					t.Errorf("lookup schema omits %s", field)
 				}
 			}
 		}

@@ -28,7 +28,7 @@ The identifiers and values below are fictional. Replace them with your verified 
 
 ## Behavior and limits
 
-Returns `devices` from the selected ADOM's logstats resource. With `device`, keeps rows whose name, serial, or devname matches; without it, returns all rows. Use analyzer identity rather than an unverified FortiManager name.
+Returns `devices` from the selected ADOM's logstats resource. With `device`, keeps a row when any supported analyzer identity field (`devname`, `name`, `device`, `sn`, `serial`, `devid`) matches. With no selector, it returns all rows.
 
 A missing row or old last-received time can indicate an ingestion gap. It does not prove that traffic never occurred. Resource availability and row fields depend on the analyzer release.
 

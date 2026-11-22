@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"net/netip"
 	"net/url"
 	"slices"
 	"sort"
@@ -91,56 +92,134 @@ type PackageHistoryQuery struct {
 	Package string `json:"package,omitempty" jsonschema:"Policy package name. The device's assigned packages are used when omitted."`
 }
 
-// GetFirewallSessions reads a short, filtered slice of the live session
-// table. FortiOS often ignores a session filter and returns the first count
-// rows, so the rows are filtered again locally. The result is not cached.
+// GetFirewallSessions verifies the requested filters against a bounded live sample.
 func (s *Service) GetFirewallSessions(ctx context.Context, input SessionQuery) (any, error) {
 	count := input.Count
 	if count <= 0 {
 		count = 50
 	}
 	count = min(count, 200)
-	query := url.Values{}
-	query.Set("count", strconv.Itoa(count))
-	resource := "/api/v2/monitor/firewall/session?" + query.Encode()
-	proxy, err := s.GetFortiManagerSettings(ctx, input.Profile, input.ADOM, input.Device, input.VDOM, resource)
+	protocol := protocolFilter(input.Protocol)
+	filters := url.Values{}
+	baseQuery := url.Values{"count": {strconv.Itoa(count)}}
+	for key, value := range map[string]string{"source": input.SourceIP, "destination": input.DestinationIP} {
+		if ip, err := netip.ParseAddr(strings.TrimSpace(value)); err == nil && ip.Zone() == "" {
+			ip = ip.Unmap()
+			filters.Set(key, ip.String())
+			if ip.Is6() {
+				baseQuery.Set("ip_version", "ipv6")
+			}
+		}
+	}
+	for key, value := range map[string]int{"sourceport": input.SourcePort, "destport": input.DestinationPort, "policyid": input.PolicyID} {
+		if value > 0 {
+			filters.Set(key, strconv.Itoa(value))
+		}
+	}
+	if baseQuery.Get("ip_version") == "ipv6" && strings.EqualFold(strings.TrimSpace(input.Protocol), "icmp") {
+		protocol = "58"
+	}
+	if protocol == "58" {
+		baseQuery.Set("ip_version", "ipv6")
+	}
+	switch protocol {
+	case "6":
+		filters.Set("protocol", "tcp")
+	case "17":
+		filters.Set("protocol", "udp")
+	case "1":
+		filters.Set("protocol", "icmp")
+	case "2":
+		filters.Set("protocol", "igmp")
+	}
+	portFilter := func(value int) string {
+		if value <= 0 {
+			return ""
+		}
+		return strconv.Itoa(value)
+	}
+	checks := []struct{ filter, field, want string }{
+		{"source", "src", input.SourceIP}, {"destination", "dst", input.DestinationIP},
+		{"sourceport", "sport", portFilter(input.SourcePort)}, {"destport", "dport", portFilter(input.DestinationPort)},
+		{"policyid", "policy_id", portFilter(input.PolicyID)}, {"protocol", "proto", protocol},
+	}
+	query := maps.Clone(baseQuery)
+	maps.Copy(query, filters)
+	vdom := routeVDOM(strings.TrimSpace(input.VDOM))
+	filterStatus := "not_requested"
+	if len(filters) > 0 {
+		filterStatus = "unverified"
+	}
+	proxy, err := s.GetFortiManagerSettings(ctx, input.Profile, input.ADOM, input.Device, vdom, "/api/v2/monitor/firewall/session?"+query.Encode())
+	if status := fortinet.DescribeError(err).FortiGateStatus; len(filters) > 0 && (status == 400 || status == 422) {
+		filterStatus = "rejected"
+		proxy, err = s.GetFortiManagerSettings(ctx, input.Profile, input.ADOM, input.Device, vdom, "/api/v2/monitor/firewall/session?"+baseQuery.Encode())
+	}
 	if err != nil {
 		return nil, err
 	}
-	protocol := protocolFilter(input.Protocol)
+	rows, envelope, skipped := monitorRecords(proxy.Data)
+	if rows == nil {
+		return nil, fmt.Errorf("FortiGate returned no recognizable firewall session rows")
+	}
+	if envelope.vdom != "" && envelope.vdom != vdom {
+		return nil, fmt.Errorf("session monitor returned VDOM %q instead of %q", envelope.vdom, vdom)
+	}
+	inspected := min(count, len(rows))
+	unreadable := skipped
 	var sessions []map[string]any
-	for _, record := range recordsOf(proxy.Data) {
-		if input.SourceIP != "" && !fieldEquals(record, input.SourceIP, "src", "source", "srcip", "src_ip", "saddr") {
+	for _, record := range rows[:inspected] {
+		row := shortSession(record)
+		returnedVDOM := monitorText(record, "vdom", "vf")
+		if row["src"] == nil && row["dst"] == nil || returnedVDOM != "" && returnedVDOM != vdom {
+			unreadable++
 			continue
 		}
-		if input.DestinationIP != "" && !fieldEquals(record, input.DestinationIP, "dst", "destination", "dstip", "dst_ip", "daddr") {
-			continue
+		match := true
+		for _, check := range checks {
+			if check.want == "" {
+				continue
+			}
+			value := row[check.field]
+			got := strings.TrimSpace(fmt.Sprint(value))
+			equal := got == check.want
+			switch check.field {
+			case "src", "dst":
+				equal = sessionAddressMatches(got, check.want)
+			case "proto":
+				equal = protocolFilter(got) == check.want
+			}
+			if !equal {
+				match = false
+				if value != nil && got != "" && filters.Has(check.filter) && filterStatus == "unverified" {
+					filterStatus = "not_fully_applied"
+				}
+			}
 		}
-		if input.SourcePort > 0 && !fieldEquals(record, strconv.Itoa(input.SourcePort), "sport", "srcport", "src_port") {
-			continue
+		if match {
+			sessions = append(sessions, row)
 		}
-		if input.DestinationPort > 0 && !fieldEquals(record, strconv.Itoa(input.DestinationPort), "dport", "dstport", "dst_port") {
-			continue
-		}
-		if input.PolicyID > 0 && !fieldEquals(record, strconv.Itoa(input.PolicyID), "policyid", "policy_id", "policy") {
-			continue
-		}
-		if protocol != "" && !protocolMatches(record, protocol) {
-			continue
-		}
-		sessions = append(sessions, shortSession(record))
 	}
 	profileName := input.Profile
 	if manager, mgrErr := s.managerForScope(input.Profile, proxy.ADOM, input.Device); mgrErr == nil {
 		profileName = manager.Name()
 	}
 	return map[string]any{
-		"profile": profileName, "adom": proxy.ADOM, "device": proxy.Device, "vdom": input.VDOM,
+		"profile": profileName, "adom": proxy.ADOM, "device": proxy.Device, "vdom": vdom,
 		"source": "fortigate", "cached": false, "requested": count, "returned": len(sessions),
-		"filtered_locally": true,
-		"note":             "The session table is read live and is not cached. FortiOS may ignore a filter and return the first requested rows; those rows are filtered locally. A later matching session can be absent when the page is shorter than the table. Raise count (at most 200) or pass policy_id.",
-		"sessions":         sessions,
+		"received": len(rows) + skipped, "inspected": inspected, "sampled": true, "limit_reached": len(rows)+skipped >= count,
+		"unreadable_rows":   unreadable,
+		"appliance_filters": filters, "appliance_filter_status": filterStatus, "filtered_locally": true,
+		"note":     "The monitor may ignore a filter or omit sessions. Only inspected rows are checked locally. A short or empty sample does not establish that a session is absent.",
+		"sessions": sessions,
 	}, nil
+}
+
+func sessionAddressMatches(got, want string) bool {
+	want = strings.TrimSpace(want)
+	a, aErr := netip.ParseAddr(got)
+	b, bErr := netip.ParseAddr(want)
+	return got == want || aErr == nil && bErr == nil && a.Unmap() == b.Unmap()
 }
 
 // ResolveAddressIdentity reads DHCP, ARP, FSSO and firewall-user tables for
@@ -421,35 +500,37 @@ func (s *Service) MapAnalyzerDevice(ctx context.Context, input AnalyzerDeviceQue
 	if err != nil {
 		return nil, err
 	}
-	resource := "/dvmdb/adom/" + url.PathEscape(fazADOM) + "/device"
-	listed, err := s.FortiAnalyzerRead(ctx, input.AnalyzerProfile, resource, nil)
+	matches, err := s.analyzerDeviceMatches(ctx, input.AnalyzerProfile, fazADOM, device.Serial, device.Hostname, device.Name, input.Device)
 	if err != nil {
 		return nil, err
-	}
-	want := []string{device.Serial, device.Hostname, device.Name, input.Device}
-	var matches []map[string]any
-	for _, record := range recordsOf(listed) {
-		matchedOn := ""
-		for _, candidate := range want {
-			candidate = strings.TrimSpace(candidate)
-			if candidate == "" {
-				continue
-			}
-			if fieldEqualsFold(record, candidate, "sn", "serial", "hostname", "name", "devname", "ip") {
-				matchedOn = candidate
-				break
-			}
-		}
-		if matchedOn != "" {
-			row := map[string]any{"matched_on": matchedOn, "device": record}
-			matches = append(matches, row)
-		}
 	}
 	return map[string]any{
 		"fortimanager_device": input.Device, "serial": device.Serial, "hostname": device.Hostname,
 		"analyzer_adom": fazADOM, "analyzer_adom_source": adomSource, "matches": matches,
-		"note": "Use the FortiAnalyzer name or serial as search_fortianalyzer_logs device. The FortiManager name often does not match devname.",
+		"note": "Use the FortiAnalyzer logged devname with search_fortianalyzer_logs. A matching serial helps identify the device record; it is not the logged name.",
 	}, nil
+}
+
+func (s *Service) analyzerDeviceMatches(ctx context.Context, profile, adom string, identifiers ...string) ([]map[string]any, error) {
+	resource := "/dvmdb/adom/" + url.PathEscape(adom) + "/device"
+	listed, err := s.FortiAnalyzerRead(ctx, profile, resource, nil)
+	if err != nil {
+		return nil, err
+	}
+	var matches []map[string]any
+	for _, record := range recordsOf(listed) {
+		for _, candidate := range identifiers {
+			candidate = strings.TrimSpace(candidate)
+			if candidate == "" {
+				continue
+			}
+			if fieldEqualsFold(record, candidate, "sn", "serial", "hostname", "name", "devname", "ip", "device", "devid") {
+				matches = append(matches, map[string]any{"matched_on": candidate, "device": record})
+				break
+			}
+		}
+	}
+	return matches, nil
 }
 
 // GetNATMapping reads central SNAT, IP pools and VIPs from the ADOM and
@@ -792,6 +873,46 @@ func searchWithoutRows(result fortinet.LogSearchResult) fortinet.LogSearchResult
 	return result
 }
 
+type monitorMetadata struct {
+	vdom      string
+	truncated bool
+}
+
+// monitorRecords unwraps proxied FortiOS responses and session details.
+func monitorRecords(value any) ([]map[string]any, monitorMetadata, int) {
+	switch typed := value.(type) {
+	case []any:
+		if len(typed) == 1 {
+			if item, ok := typed[0].(map[string]any); ok {
+				if _, wrapped := item["response"]; wrapped {
+					return monitorRecords(item)
+				}
+			}
+		}
+		rows := recordsOf(typed)
+		return rows, monitorMetadata{}, len(typed) - len(rows)
+	case []map[string]any:
+		rows := make([]map[string]any, len(typed))
+		copy(rows, typed)
+		return rows, monitorMetadata{}, 0
+	case map[string]any:
+		for _, key := range []string{"response", "results", "details", "sessions", "data", "records"} {
+			if nested, exists := typed[key]; exists {
+				rows, metadata, skipped := monitorRecords(nested)
+				if metadata.vdom == "" {
+					metadata.vdom = monitorText(typed, "vdom")
+				}
+				metadata.truncated = metadata.truncated || typed["truncated"] == true || typed["has_more"] == true
+				return rows, metadata, skipped
+			}
+		}
+		if _, ok := fieldValue(typed, "ip_mask", "prefix", "network", "dst", "destination", "daddr", "dstip", "dst_ip", "src", "source", "saddr", "srcip", "src_ip"); ok {
+			return []map[string]any{typed}, monitorMetadata{}, 0
+		}
+	}
+	return nil, monitorMetadata{}, 0
+}
+
 func recordsOf(value any) []map[string]any {
 	switch typed := value.(type) {
 	case nil:
@@ -890,43 +1011,25 @@ func fieldEquals(record map[string]any, want string, keys ...string) bool {
 
 func fieldEqualsFold(record map[string]any, want string, keys ...string) bool {
 	want = strings.TrimSpace(want)
-	value, ok := fieldValue(record, keys...)
-	return ok && strings.EqualFold(strings.TrimSpace(fmt.Sprint(value)), want)
+	for _, key := range keys {
+		if value, ok := fieldValue(record, key); ok && strings.EqualFold(strings.TrimSpace(fmt.Sprint(value)), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func protocolFilter(protocol string) string {
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
-	case "", "any":
+	case "", "any", "all":
 		return ""
-	case "tcp":
-		return "6"
-	case "udp":
-		return "17"
-	case "icmp":
-		return "1"
+	case "igmp":
+		return "2"
 	default:
+		if number, ok := protocolToNumber(protocol); ok {
+			return strconv.Itoa(number)
+		}
 		return strings.ToLower(strings.TrimSpace(protocol))
-	}
-}
-
-func protocolMatches(record map[string]any, protocol string) bool {
-	want := protocolFilter(protocol)
-	if want == "" {
-		return true
-	}
-	got := strings.ToLower(strings.TrimSpace(fmt.Sprint(firstField(record, "proto", "protocol"))))
-	if got == want {
-		return true
-	}
-	switch want {
-	case "6":
-		return got == "tcp"
-	case "17":
-		return got == "udp"
-	case "1":
-		return got == "icmp"
-	default:
-		return false
 	}
 }
 

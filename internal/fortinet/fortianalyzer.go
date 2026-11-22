@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,7 +23,7 @@ type FortiAnalyzer struct {
 	// searches remembers submitted searches by task ID, so a resumed search
 	// reports the log type, filter and time range it was submitted with.
 	searchMu sync.Mutex
-	searches map[string]submittedSearch
+	searches map[string]*submittedSearch
 }
 
 type submittedSearch struct {
@@ -69,7 +70,7 @@ func NewFortiAnalyzer(profile config.ProfileConfig) (*FortiAnalyzer, error) {
 		return nil, err
 	}
 	rpc.policy = policyFortiAnalyzer
-	return &FortiAnalyzer{rpc: rpc, searches: make(map[string]submittedSearch)}, nil
+	return &FortiAnalyzer{rpc: rpc, searches: make(map[string]*submittedSearch)}, nil
 }
 
 func (c *FortiAnalyzer) Name() string {
@@ -91,11 +92,11 @@ func (c *FortiAnalyzer) Status(ctx context.Context) (any, error) {
 	return c.Read(ctx, "/sys/status", nil)
 }
 
-func (c *FortiAnalyzer) rememberSearch(taskID string, search submittedSearch) {
+func (c *FortiAnalyzer) rememberSearch(taskID string, search submittedSearch) *submittedSearch {
 	c.searchMu.Lock()
 	defer c.searchMu.Unlock()
 	if c.searches == nil {
-		c.searches = make(map[string]submittedSearch)
+		c.searches = make(map[string]*submittedSearch)
 	}
 	now := time.Now()
 	for id, entry := range c.searches {
@@ -113,27 +114,41 @@ func (c *FortiAnalyzer) rememberSearch(taskID string, search submittedSearch) {
 		delete(c.searches, oldestID)
 	}
 	search.created = now
-	c.searches[taskID] = search
+	c.searches[taskID] = &search
+	return &search
 }
 
-func (c *FortiAnalyzer) submittedSearch(taskID string) (submittedSearch, bool) {
+func (c *FortiAnalyzer) submittedSearch(taskID string) *submittedSearch {
 	c.searchMu.Lock()
 	defer c.searchMu.Unlock()
 	search, ok := c.searches[taskID]
 	if ok && time.Since(search.created) > submittedSearchTTL {
 		delete(c.searches, taskID)
-		return submittedSearch{}, false
+		return nil
 	}
-	return search, ok
+	return search
+}
+
+func (c *FortiAnalyzer) disableMissingSearchReuse(taskID string, search *submittedSearch, err error) {
+	info := DescribeError(err)
+	if search == nil || info.Kind != ErrorKindNotFound || (info.HTTPStatus != 0 && info.HTTPStatus != http.StatusNotFound) {
+		return
+	}
+	c.searchMu.Lock()
+	defer c.searchMu.Unlock()
+	if c.searches[taskID] == search {
+		// Keep the query for explicit task recovery, but never auto-resume it.
+		search.identity = ""
+	}
 }
 
 // findRecentSearch returns a task this process submitted for the same
 // ADOM, log type, filter, device, time window, limit and offset.
-func (c *FortiAnalyzer) findRecentSearch(identity string) (string, submittedSearch, bool) {
+func (c *FortiAnalyzer) findRecentSearch(identity string) (string, *submittedSearch) {
 	c.searchMu.Lock()
 	defer c.searchMu.Unlock()
 	var foundID string
-	var found submittedSearch
+	var found *submittedSearch
 	now := time.Now()
 	for id, entry := range c.searches {
 		if now.Sub(entry.created) > identicalSearchReuse || entry.identity != identity {
@@ -143,7 +158,7 @@ func (c *FortiAnalyzer) findRecentSearch(identity string) (string, submittedSear
 			foundID, found = id, entry
 		}
 	}
-	return foundID, found, foundID != ""
+	return foundID, found
 }
 
 func logSearchIdentity(request LogSearchRequest, filter string) string {
@@ -188,10 +203,10 @@ func (c *FortiAnalyzer) SearchLogs(ctx context.Context, request LogSearchRequest
 	request.TaskID = strings.TrimSpace(request.TaskID)
 
 	if request.TaskID != "" {
-		submitted, known := c.submittedSearch(request.TaskID)
+		submitted := c.submittedSearch(request.TaskID)
 		// Task IDs can collide across ADOMs. Never borrow another ADOM's
 		// saved query to manufacture continuation arguments.
-		known = known && request.ADOM == submitted.request.ADOM
+		known := submitted != nil && request.ADOM == submitted.request.ADOM
 		filter := request.Filter
 		if known {
 			// Report the search as it was submitted; the caller usually passes
@@ -207,19 +222,22 @@ func (c *FortiAnalyzer) SearchLogs(ctx context.Context, request LogSearchRequest
 		if request.LogType == "" {
 			request.LogType = "traffic"
 		}
-		matchBudget := request.Limit
+		matchBudget, submittedOffset := request.Limit, 0
 		if known {
-			matchBudget = submitted.request.Limit
+			matchBudget, submittedOffset = submitted.request.Limit, submitted.request.Offset
 		}
 		result, timedOut, err := c.pollLogSearch(ctx, request.ADOM, request.TaskID, request.Limit, request.Offset)
 		searchResult := logSearchResult(c.Name(), request, filter, request.TaskID, request.Offset, matchBudget, result, timedOut, warnings)
 		searchResult.Resumed = true
-		setLogContinuation(&searchResult, request, submitted.request.Offset, matchBudget, known)
+		setLogContinuation(&searchResult, request, submittedOffset, matchBudget, known)
 		if known {
 			searchResult.TimeRangeSent = submitted.timeRangeSent
 			searchResult.ApplianceTimezone = submitted.applianceZone
 		}
 		if err != nil {
+			if known {
+				c.disableMissingSearchReuse(request.TaskID, submitted, err)
+			}
 			return searchResult, fmt.Errorf("FortiAnalyzer log search task %s in ADOM %q: %w; a finished task may have expired, submit the search again without task_id", request.TaskID, request.ADOM, err)
 		}
 		return searchResult, nil
@@ -256,7 +274,7 @@ func (c *FortiAnalyzer) SearchLogs(ctx context.Context, request LogSearchRequest
 	}
 	effectiveFilter := request.Filter
 	if request.Device != "" {
-		deviceFilter := fmt.Sprintf("devname=\"%s\"", strings.ReplaceAll(request.Device, "\"", "\\\""))
+		deviceFilter := "devname=" + strconv.Quote(request.Device)
 		if effectiveFilter == "" {
 			effectiveFilter = deviceFilter
 		} else {
@@ -298,7 +316,7 @@ func (c *FortiAnalyzer) SearchLogs(ctx context.Context, request LogSearchRequest
 		order = []int{known}
 	}
 	identity := logSearchIdentity(request, effectiveFilter)
-	if taskID, previous, ok := c.findRecentSearch(identity); ok {
+	if taskID, previous := c.findRecentSearch(identity); previous != nil {
 		warnings = append(warnings, fmt.Sprintf("Reused log search task %s submitted %s ago for the same ADOM, filter, device, time window, limit and offset.", taskID, time.Since(previous.created).Round(time.Second)))
 		result, timedOut, err := c.pollLogSearch(ctx, request.ADOM, taskID, request.Limit, request.Offset)
 		searchResult := logSearchResult(c.Name(), request, effectiveFilter, taskID, request.Offset, previous.request.Limit, result, timedOut, warnings)
@@ -307,6 +325,7 @@ func (c *FortiAnalyzer) SearchLogs(ctx context.Context, request LogSearchRequest
 		searchResult.ApplianceTimezone = previous.applianceZone
 		searchResult.TimeRangeSent = previous.timeRangeSent
 		if err != nil {
+			c.disableMissingSearchReuse(taskID, previous, err)
 			return searchResult, fmt.Errorf("FortiAnalyzer log search task %s in ADOM %q: %w; a finished task may have expired, submit the search again without task_id", taskID, request.ADOM, err)
 		}
 		return searchResult, nil
@@ -351,13 +370,14 @@ func (c *FortiAnalyzer) SearchLogs(ctx context.Context, request LogSearchRequest
 			Hint:     "The search cannot be polled without a task id. Check the FortiAnalyzer release and its Log View API; submitting again creates a new search.",
 		}, nil)
 	}
-	c.rememberSearch(taskID, submittedSearch{request: request, filter: effectiveFilter, identity: identity, timeRangeSent: timeRangeSent, applianceZone: applianceZone})
+	submitted := c.rememberSearch(taskID, submittedSearch{request: request, filter: effectiveFilter, identity: identity, timeRangeSent: timeRangeSent, applianceZone: applianceZone})
 
 	result, timedOut, err := c.pollLogSearch(ctx, request.ADOM, taskID, request.Limit, request.Offset)
 	searchResult := logSearchResult(c.Name(), request, effectiveFilter, taskID, request.Offset, request.Limit, result, timedOut, warnings)
 	searchResult.ApplianceTimezone = applianceZone
 	searchResult.TimeRangeSent = timeRangeSent
 	if err != nil {
+		c.disableMissingSearchReuse(taskID, submitted, err)
 		return searchResult, fmt.Errorf("FortiAnalyzer log search result for task %s in ADOM %q: %w", taskID, request.ADOM, err)
 	}
 	return searchResult, nil
@@ -566,10 +586,8 @@ var logViewRequestOptions = map[string]bool{
 }
 
 func (c *FortiAnalyzer) Read(ctx context.Context, resource string, data map[string]any) (any, error) {
-	if adom, ok := resourceADOM(resource); ok {
-		if err := c.validateADOM(adom); err != nil {
-			return nil, err
-		}
+	if err := ValidateReadScope(resource, len(c.rpc.profile.ADOMs) > 0, c.validateADOM); err != nil {
+		return nil, err
 	}
 	param := map[string]any{
 		"url": normalizeRPCPath(resource),
@@ -580,7 +598,7 @@ func (c *FortiAnalyzer) Read(ctx context.Context, resource string, data map[stri
 	}
 	body := make(map[string]any)
 	for key, value := range data {
-		if key == "url" || key == "apiver" {
+		if strings.EqualFold(key, "url") || strings.EqualFold(key, "apiver") {
 			continue
 		}
 		if apiV3 || logViewRequestOptions[key] {

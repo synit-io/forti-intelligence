@@ -48,9 +48,11 @@ Start with [`investigate_traffic`](tools/investigate_traffic.md). Scope is optio
 }
 ```
 
+For an IPv4 ping, use `"protocol": "icmp"`, `"icmp_type": 8` and `"icmp_code": 0`, and omit both ports. For an IPv6 echo request, use `"protocol": "icmpv6"` and type `128` with code `0`.
+
 Read ownership candidates, inventory freshness, `route.path.end`, and every entry in `hops`. Add `detail: "compact"` when duplicate/raw evidence is unnecessary: canonical hops remain in `hops`, while duplicate route-hop arrays are null. In the full view, top-level `policy` and `web_filter` duplicate the first hop when hops exist; with no traced hop, inspect any fallback top-level policy. The configured route does not prove forwarding, actual NAT, or the return path.
 
-For a focused follow-up, use [`resolve_route`](tools/resolve_route.md) with `follow: true` and the source-side scope. Use [`get_routing_neighbors`](tools/get_routing_neighbors.md) and a live [`get_fortigate_settings`](tools/get_fortigate_settings.md) routing read when dynamic routing or SD-WAN can change the configured answer.
+For a focused follow-up, use [`resolve_route`](tools/resolve_route.md) with `follow: true` and the source-side scope. For the installed route, pass `live: true`, the device, its VDOM and the destination IP to the same tool. Use [`get_routing_neighbors`](tools/get_routing_neighbors.md) when dynamic routing or SD-WAN health may explain a difference.
 
 ### 2. Map analyzer identity and retrieve incident evidence
 

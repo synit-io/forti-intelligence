@@ -27,9 +27,9 @@ func lookupFixture(t *testing.T, policies []fortinet.FirewallPolicy, addresses [
 		},
 		interfaces: map[string][]fortinet.Interface{
 			"test-adom-primary/fgt": {
-				{Name: "lan", IP: "10.0.0.1/24", VDOM: "root"},
-				{Name: "dmz", IP: "10.0.5.1/24", VDOM: "root"},
-				{Name: "wan", IP: "203.0.113.1/24", VDOM: "root"},
+				{Name: "lan", IP: "10.0.0.1/24", Networks: []string{"10.0.0.0/24"}, VDOM: "root"},
+				{Name: "dmz", IP: "10.0.5.1/24", Networks: []string{"10.0.5.0/24"}, VDOM: "root"},
+				{Name: "wan", IP: "203.0.113.1/24", Networks: []string{"203.0.113.0/24"}, VDOM: "root"},
 			},
 		},
 		policies:  map[string][]fortinet.FirewallPolicy{"test-adom-primary/pkg": policies},
@@ -214,7 +214,7 @@ func TestLookupRunsBoundedLiveLookupsAfterConfiguredVerdict(t *testing.T) {
 		t.Fatalf("live calls = %d lookups = %d warnings = %v", manager.policyLookupCalls, len(output.LiveLookups), output.Warnings)
 	}
 	first := output.LiveLookups[0]
-	if first.PolicyID == nil || *first.PolicyID != 7 || first.Agreement != "agrees" || len(output.Decisions) != 3 {
+	if first.PolicyID == nil || *first.PolicyID != 7 || first.Agreement != "agrees" || len(output.Decisions) != 6 {
 		t.Fatalf("live = %#v decisions = %#v", first, output.Decisions)
 	}
 
@@ -226,7 +226,133 @@ func TestLookupRunsBoundedLiveLookupsAfterConfiguredVerdict(t *testing.T) {
 	slowApp := New(cfg, store, map[string]fortinet.Manager{"fmg": slow}, nil)
 	manager.policyLookupCalls = 0
 	output = lookup(t, slowApp, PolicyLookupInput{Protocol: "any"})
-	if manager.policyLookupCalls != 1 || len(output.Decisions) != 1 || output.Decisions[0].PolicyID != 7 {
+	if manager.policyLookupCalls != 1 || len(output.Decisions) != 2 || output.Decisions[0].PolicyID != 7 || output.Decisions[1].PolicyID != 7 {
 		t.Fatalf("live calls = %d decisions = %#v, want one timed-out lookup and the configured verdict", manager.policyLookupCalls, output.Decisions)
+	}
+}
+
+func TestLookupReconcilesTCPAndUDPIndependently(t *testing.T) {
+	app, manager := lookupFixture(t, []fortinet.FirewallPolicy{lanToWAN(7, "accept", "HTTPS"), lanToWAN(9, "deny", "ALL")}, nil, nil)
+	manager.live["test-adom-primary/fgt/root/lan/tcp"] = fortinet.ProxyResult{Data: map[string]any{"policy_id": float64(7)}}
+	manager.live["test-adom-primary/fgt/root/lan/udp"] = fortinet.ProxyResult{Data: map[string]any{"policy_id": float64(9)}}
+	for _, protocol := range []string{"", "any"} {
+		output, err := app.LookupPolicies(context.Background(), PolicyLookupInput{
+			SourceIP: "10.0.0.42", DestinationIP: "203.0.113.50", DestinationPort: 443, Protocol: protocol,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(output.Decisions) != 2 || len(output.LiveLookups) != 2 {
+			t.Fatalf("decisions = %#v, live = %#v", output.Decisions, output.LiveLookups)
+		}
+		for i, want := range []struct {
+			protocol string
+			id       int
+		}{{"tcp", 7}, {"udp", 9}} {
+			decision, live := output.Decisions[i], output.LiveLookups[i]
+			if decision.Protocol != want.protocol || decision.PolicyID != want.id || live.Protocol != want.protocol ||
+				live.StaticFirstMatch == nil || *live.StaticFirstMatch != want.id || live.Agreement != "agrees" {
+				t.Fatalf("%s verdict = %#v, live = %#v", want.protocol, decision, live)
+			}
+		}
+	}
+}
+
+func TestLookupAppliesProtocolSpecificRouteToEachVerdict(t *testing.T) {
+	manager := trafficEdge("fmg")
+	const adom = "test-adom-primary"
+	manager.devices[adom][0].PolicyRoutes = []fortinet.PolicyRoute{
+		{Family: "ipv4", VDOM: "root", SeqNum: 1, Protocol: 17, Gateway: "192.0.2.1", OutputDevice: "backup", Status: "enable"},
+	}
+	manager.interfaces[adom+"/edge"] = append(manager.interfaces[adom+"/edge"], fortinet.Interface{
+		Name: "backup", VDOM: "root", IP: "192.0.2.2/24", Networks: []string{"192.0.2.0/24"},
+	})
+	deny := lanToWAN(9, "deny", "ALL")
+	deny.DestinationInterfaces = []string{"backup"}
+	manager.packages = map[string][]fortinet.PolicyPackage{adom: {{Name: "pkg", Members: []fortinet.PackageMember{{Device: "edge", VDOM: "root"}}}}}
+	manager.policies = map[string][]fortinet.FirewallPolicy{adom + "/pkg": {lanToWAN(7, "accept", "ALL"), deny}}
+	app := trafficRoutingService(t, map[string]fortinet.Manager{"fmg": manager})
+	output := lookup(t, app, PolicyLookupInput{DestinationIP: "8.8.8.8", Protocol: "any"})
+	if len(output.Decisions) != 2 || output.Decisions[0].Protocol != "tcp" || output.Decisions[0].PolicyID != 7 ||
+		output.Decisions[1].Protocol != "udp" || output.Decisions[1].PolicyID != 9 {
+		t.Fatalf("decisions = %#v, want TCP via WAN and UDP via backup", output.Decisions)
+	}
+}
+
+func TestPortlessICMPPolicyAndInvestigation(t *testing.T) {
+	for _, test := range []struct {
+		name, source, destination, protocol, normalized, configProtocol string
+		echoType                                                        int
+	}{
+		{"IPv4", "10.0.0.42", "203.0.113.50", "1", "icmp", "ICMP", 8},
+		{"IPv6", "2001:db8:1::42", "2001:db8:2::50", "icmp", "icmpv6", "ICMP6", 128},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			code := 0
+			v4 := test.normalized == "icmp"
+			policies := []fortinet.FirewallPolicy{lanToWAN(5, "accept", "HTTPS"), lanToWAN(7, "accept", "icmp-group"), lanToWAN(9, "deny", "ALL")}
+			if !v4 {
+				for i := range policies {
+					policies[i].SourceAddresses, policies[i].DestinationAddresses = nil, nil
+					policies[i].SourceAddresses6, policies[i].DestinationAddresses6 = []string{"all"}, []string{"all"}
+				}
+			}
+			app, manager := lookupFixture(t, policies, nil, []fortinet.ServiceObject{
+				{Name: "icmp-group", Members: []string{"exact-echo"}},
+				{Name: "exact-echo", Protocol: test.configProtocol, ICMPType: &test.echoType, ICMPCode: &code},
+			})
+			if !v4 {
+				for i := range manager.interfaces["test-adom-primary/fgt"] {
+					iface := &manager.interfaces["test-adom-primary/fgt"][i]
+					switch iface.Name {
+					case "lan":
+						iface.IPv6 = []string{"2001:db8:1::1/64"}
+						iface.Networks = append(iface.Networks, "2001:db8:1::/64")
+					case "wan":
+						iface.IPv6 = []string{"2001:db8:2::1/64"}
+						iface.Networks = append(iface.Networks, "2001:db8:2::/64")
+					}
+				}
+				app.store.Refresh(context.Background())
+			}
+			manager.live["test-adom-primary/fgt/root/lan/"+test.normalized] = fortinet.ProxyResult{Data: map[string]any{"policy_id": float64(7)}}
+			input := PolicyLookupInput{SourceIP: test.source, DestinationIP: test.destination, Protocol: test.protocol, ICMPType: &test.echoType}
+			tentative, err := app.LookupPolicies(context.Background(), input)
+			if err != nil || len(tentative.Decisions) != 1 || tentative.Decisions[0].PolicyID != 7 || tentative.Decisions[0].Confidence != "tentative" {
+				t.Fatalf("missing code: decisions = %#v, err = %v", tentative.Decisions, err)
+			}
+			input.ICMPCode = &code
+			exact, err := app.LookupPolicies(context.Background(), input)
+			if err != nil || len(exact.Decisions) != 1 || exact.Decisions[0].PolicyID != 7 || exact.Decisions[0].Confidence != "likely" ||
+				len(exact.LiveLookups) != 1 || exact.LiveLookups[0].Protocol != test.normalized || manager.policyLookupCalls != 2 {
+				t.Fatalf("explicit zero code: decisions = %#v, live = %#v, calls = %d, err = %v", exact.Decisions, exact.LiveLookups, manager.policyLookupCalls, err)
+			}
+			wrongCode := 1
+			input.ICMPCode = &wrongCode
+			denied, err := app.LookupPolicies(context.Background(), input)
+			if err != nil || len(denied.Decisions) != 1 || denied.Decisions[0].PolicyID != 9 || denied.Decisions[0].Confidence != "likely" {
+				t.Fatalf("wrong code: decisions = %#v, err = %v", denied.Decisions, err)
+			}
+			investigation := InvestigateInput{SourceIP: test.source, DestinationIP: test.destination, Protocol: test.protocol, ICMPType: &test.echoType, ICMPCode: &code}
+			full, err := app.Investigate(context.Background(), investigation)
+			compact := CompactInvestigate(investigation, full)
+			if err != nil || len(full.Hops) != 1 || full.Hops[0].Policy == nil || len(full.Hops[0].Policy.Decisions) != 1 ||
+				full.Hops[0].Policy.Decisions[0].PolicyID != 7 || strings.Contains(compact.Coverage.Policy, "skipped") ||
+				compact.Flow.Protocol != test.normalized || compact.Flow.ICMPCode == nil || *compact.Flow.ICMPCode != 0 {
+				t.Fatalf("investigation = %#v, compact flow = %#v, err = %v", full, compact.Flow, err)
+			}
+		})
+	}
+}
+
+func TestOutOfRangeApplianceICMPTypeRemainsTentative(t *testing.T) {
+	configuredType, requestedType := 256, 8
+	app, _ := lookupFixture(t, []fortinet.FirewallPolicy{lanToWAN(7, "accept", "custom-icmp")}, nil,
+		[]fortinet.ServiceObject{{Name: "custom-icmp", Protocol: "ICMP", ICMPType: &configuredType}})
+	output, err := app.LookupPolicies(context.Background(), PolicyLookupInput{
+		SourceIP: "10.0.0.42", DestinationIP: "203.0.113.50", Protocol: "icmp", ICMPType: &requestedType,
+	})
+	if err != nil || len(output.Decisions) != 1 || output.Decisions[0].PolicyID != 7 || output.Decisions[0].Confidence != "tentative" {
+		t.Fatalf("decisions = %#v, err = %v, want tentative configured match", output.Decisions, err)
 	}
 }

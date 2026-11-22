@@ -111,3 +111,37 @@ func TestResolveRouteFollowNeedsAStart(t *testing.T) {
 		t.Fatalf("path = %#v, want a clear not_resolved without device or source", output.Path)
 	}
 }
+
+func TestResolveRouteFollowsNextHopAcrossVDOMsOnSameDevice(t *testing.T) {
+	app := twoHopFixture(t)
+	snapshot := app.store.Snapshot()
+	branch, _ := findDevice(snapshot, "fmg", "test-adom-primary", "branch")
+	hub, _ := findDevice(snapshot, "fmg", "test-adom-primary", "hub")
+	branch.VDOMs = append(branch.VDOMs, "edge")
+	for _, iface := range hub.Interfaces {
+		iface.VDOM = "edge"
+		iface.Name = "edge-" + iface.Name
+		branch.Interfaces = append(branch.Interfaces, iface)
+	}
+	// The same VDOM also has a gateway address with an exact inventory entry.
+	// Only the owner in the other VDOM can be a hop.
+	branch.Interfaces = append(branch.Interfaces, fortinet.Interface{
+		Name: "local-gateway", VDOM: "root", IP: "172.16.0.2/32",
+	})
+	snapshot.Devices = []fortinet.Device{branch}
+	output, err := app.resolveRouteAddress(context.Background(), RouteLookupInput{
+		IP: "198.51.100.42", SourceIP: "10.1.0.10", Device: "branch", VDOM: "root", Follow: true,
+	}, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := output.Path
+	if path == nil || len(path.Hops) != 2 || path.Hops[0].VDOM != "root" || path.Hops[1].VDOM != "edge" ||
+		path.Hops[1].Device != "branch" || strings.Join(path.Hops[1].Ingress, ",") != "edge-transit,z_transit" ||
+		path.End != "destination_connected" {
+		t.Fatalf("path = %#v, want root then edge on branch", path)
+	}
+	if owners := path.Hops[0].NextHops; len(owners) != 1 || owners[0].VDOM != "edge" {
+		t.Fatalf("next-hop owners = %#v, want edge only", owners)
+	}
+}

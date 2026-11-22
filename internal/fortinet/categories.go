@@ -1,6 +1,7 @@
 package fortinet
 
 import (
+	"encoding/json"
 	"sort"
 	"strconv"
 	"strings"
@@ -163,6 +164,8 @@ func ParseCategoryReference(value any) (int, bool) {
 		return int(typed), true
 	case float64:
 		return int(typed), true
+	case json.Number:
+		return ParseJSONInt(typed)
 	case string:
 		text := strings.TrimSpace(typed)
 		if number, err := strconv.Atoi(text); err == nil {

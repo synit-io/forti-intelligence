@@ -18,6 +18,8 @@ type InvestigateFlow struct {
 	SourcePort      int    `json:"source_port,omitempty"`
 	DestinationPort int    `json:"destination_port,omitempty"`
 	Protocol        string `json:"protocol,omitempty"`
+	ICMPType        *int   `json:"icmp_type,omitempty"`
+	ICMPCode        *int   `json:"icmp_code,omitempty"`
 	SourceInterface string `json:"source_interface,omitempty"`
 	Profile         string `json:"profile,omitempty"`
 	ADOM            string `json:"adom,omitempty"`
@@ -41,11 +43,11 @@ func CompactInvestigate(input InvestigateInput, full InvestigateOutput) CompactI
 		input = *full.Input
 	}
 	out := CompactInvestigation{Detail: "compact", InvestigateOutput: full,
-		Flow:            InvestigateFlow{SourceIP: input.SourceIP, DestinationIP: input.DestinationIP, SourcePort: input.SourcePort, DestinationPort: input.DestinationPort, Protocol: input.Protocol, SourceInterface: input.SourceInterface, Profile: input.Profile, ADOM: input.ADOM, Device: input.Device, VDOM: input.VDOM, URL: input.URL},
+		Flow:            InvestigateFlow{SourceIP: input.SourceIP, DestinationIP: input.DestinationIP, SourcePort: input.SourcePort, DestinationPort: input.DestinationPort, Protocol: input.Protocol, ICMPType: input.ICMPType, ICMPCode: input.ICMPCode, SourceInterface: input.SourceInterface, Profile: input.Profile, ADOM: input.ADOM, Device: input.Device, VDOM: input.VDOM, URL: input.URL},
 		EvidenceSources: []string{"FortiManager inventory and configured routing", "FortiManager configured policy and scoped FortiGate live lookup when available"},
 		Coverage:        InvestigationCoverage{Policy: "inspect per-hop complete, errors and warnings", WebFilter: "not requested", Logs: "not requested", NAT: "Upstream NAT is not resolved; downstream lookups use the original tuple.", ReturnPath: "not checked"},
 		Omitted:         make(map[string]int), OmissionNotice: "Duplicate first-hop policy/web-filter and route-hop copies, plus raw live-lookup payloads, are omitted. Counts describe representation only, not evidence completeness. Scoped identifiers remain usable with focused tools or detail=full."}
-	if input.DestinationPort == 0 {
+	if input.DestinationPort == 0 && !isICMP(normalizeProtocol(input.Protocol)) {
 		out.Coverage.Policy = "skipped: destination_port omitted"
 	}
 	if input.URL != "" {

@@ -21,7 +21,7 @@ type RouteLookupInput struct {
 	IP              string `json:"ip" jsonschema:"Destination IPv4 or IPv6 address, or a hostname resolved with the MCP host's DNS (up to 4 addresses of the source's family are evaluated), for example 8.8.8.8 or www.example.com"`
 	SourceIP        string `json:"source_ip,omitempty" jsonschema:"Source address of the flow; needed to evaluate policy routes and SD-WAN rules with source conditions"`
 	SourceInterface string `json:"source_interface,omitempty" jsonschema:"Ingress interface or zone; derived from source_ip ownership when omitted"`
-	Protocol        string `json:"protocol,omitempty" jsonschema:"tcp, udp, sctp, icmp or an IP protocol number; rules with a protocol condition stay tentative when omitted"`
+	Protocol        string `json:"protocol,omitempty" jsonschema:"tcp, udp, sctp, icmp, icmpv6 or an IP protocol number; rules with a protocol condition stay tentative when omitted"`
 	DestinationPort int    `json:"destination_port,omitempty" jsonschema:"Destination port for rules with a port range"`
 	SourcePort      int    `json:"source_port,omitempty" jsonschema:"Source port for policy-route source-port conditions; matching restricted rules remain tentative when omitted"`
 	Profile         string `json:"profile,omitempty" jsonschema:"Limit to one FortiManager profile name"`
@@ -29,6 +29,7 @@ type RouteLookupInput struct {
 	Device          string `json:"device,omitempty" jsonschema:"Limit to one managed FortiGate name; use the source-side FortiGate from resolve_ip_ownership"`
 	VDOM            string `json:"vdom,omitempty" jsonschema:"Limit to one VDOM name"`
 	Follow          bool   `json:"follow,omitempty" jsonschema:"Walk the configured path through inventoried FortiGates. Read path.end before interpreting the last managed device; identify filtering from policies at each hop. Needs an unambiguous device/VDOM or source_ip."`
+	Live            bool   `json:"live,omitempty" jsonschema:"Also read the FortiGate's active routing table for one concrete destination IP. Requires one unambiguous inventoried device and an explicit VDOM."`
 }
 
 type RouteLookupOutput struct {
@@ -37,7 +38,8 @@ type RouteLookupOutput struct {
 	DestinationResolution *DestinationResolution `json:"destination_resolution,omitempty"`
 	Decisions             []RouteDecision        `json:"decisions"`
 	// Path is the hop-by-hop walk requested with follow.
-	Path *RoutePath `json:"path,omitempty"`
+	Path      *RoutePath         `json:"path,omitempty"`
+	LiveRoute *LiveRouteEvidence `json:"live_route,omitempty"`
 	// OtherAddresses holds the results for further addresses of a hostname.
 	OtherAddresses []RouteLookupOutput `json:"other_addresses,omitempty"`
 }
@@ -80,6 +82,7 @@ const (
 // RouteDecision is the configured forwarding decision of one device VDOM in
 // FortiOS order: policy routes, then SD-WAN rules, then the routing table.
 type RouteDecision struct {
+	Protocol         string                     `json:"protocol,omitempty"`
 	Profile          string                     `json:"profile"`
 	ADOM             string                     `json:"adom"`
 	Device           string                     `json:"device"`
@@ -142,6 +145,14 @@ func (s *Service) ResolveRoute(ctx context.Context, input RouteLookupInput) (Rou
 	ctx, cancel := s.withTimeout(ctx)
 	defer cancel()
 	target := strings.TrimSpace(input.IP)
+	if input.Live {
+		if _, err := netip.ParseAddr(target); err != nil {
+			return RouteLookupOutput{}, fmt.Errorf("live route lookup requires a concrete destination IP")
+		}
+		if strings.TrimSpace(input.Device) == "" || strings.TrimSpace(input.VDOM) == "" {
+			return RouteLookupOutput{}, fmt.Errorf("live route lookup requires device and vdom")
+		}
+	}
 	if _, err := netip.ParseAddr(target); err == nil || target == "" {
 		return s.resolveRouteAddress(ctx, input, s.store.Snapshot())
 	}
@@ -207,11 +218,14 @@ func (s *Service) resolveRouteAddress(ctx context.Context, input RouteLookupInpu
 		tuple.src = source
 	}
 	if raw := strings.TrimSpace(input.Protocol); raw != "" {
-		number, ok := protocolToNumber(raw)
-		if !ok {
-			return output, fmt.Errorf("unsupported protocol %q; use tcp, udp, sctp, icmp or a number from 1 to 255", raw)
+		protocol, protocolErr := flowProtocol(raw, tuple.dst.Is6())
+		if protocolErr != nil {
+			return output, protocolErr
 		}
-		tuple.protocol = number
+		tuple.protocol, _ = protocolToNumber(protocol)
+		if isICMP(protocol) {
+			tuple.srcPort, tuple.dstPort = 0, 0
+		}
 	}
 
 	type scopeKey struct{ profile, adom, device, vdom string }
@@ -233,6 +247,9 @@ func (s *Service) resolveRouteAddress(ctx context.Context, input RouteLookupInpu
 	if input.Follow {
 		output.Path = s.followRoute(ctx, snapshot, input, tuple, &output.RouteResult)
 	}
+	if input.Live {
+		output.LiveRoute = s.liveRoute(ctx, snapshot, base.Scope, tuple.dst)
+	}
 	return output, nil
 }
 
@@ -248,7 +265,7 @@ func (s *Service) routeDecision(ctx context.Context, snapshot inventory.Snapshot
 			continue
 		}
 		for _, owner := range inventory.NextHopOwners(snapshot, address) {
-			if owner.Device != device.Name || owner.Profile != device.Profile {
+			if owner.Profile != device.Profile || owner.ADOM != device.ADOM || owner.Device != device.Name || owner.VDOM != routeVDOM(vdom) {
 				decision.NextHops = append(decision.NextHops, owner)
 			}
 		}
@@ -871,6 +888,8 @@ func protocolToNumber(value string) (int, bool) {
 		return 132, true
 	case "icmp":
 		return 1, true
+	case "icmpv6":
+		return 58, true
 	case "":
 		return 0, false
 	default:

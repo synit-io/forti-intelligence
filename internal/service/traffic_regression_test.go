@@ -177,12 +177,12 @@ func TestLiveReconcilePreservesVDOM(t *testing.T) {
 	policyID := 9
 	entry := LivePolicyLookup{Profile: "fmg", ADOM: "test-adom-primary", Device: "edge", VDOM: "blue", DestinationIP: "8.8.8.8", Protocol: "tcp", PolicyID: &policyID}
 	out := PolicyLookupOutput{Decisions: []PolicyDecision{
-		{Profile: "fmg", ADOM: "test-adom-primary", Device: "edge", VDOM: "root", DestinationIP: "8.8.8.8", Package: "root-pkg", PolicyID: 7, Action: "accept"},
-		{Profile: "fmg", ADOM: "test-adom-primary", Device: "edge", VDOM: "blue", DestinationIP: "8.8.8.8", Package: "blue-pkg", PolicyID: 9, Action: "accept"},
+		{Profile: "fmg", ADOM: "test-adom-primary", Device: "edge", VDOM: "root", DestinationIP: "8.8.8.8", Package: "root-pkg", Protocol: "tcp", PolicyID: 7, Action: "accept"},
+		{Profile: "fmg", ADOM: "test-adom-primary", Device: "edge", VDOM: "blue", DestinationIP: "8.8.8.8", Package: "blue-pkg", Protocol: "tcp", PolicyID: 9, Action: "accept"},
 	}}
 	reconcileLive(&entry, &out)
 	if entry.Agreement != "agrees" {
-		t.Fatalf("blue live result compared with wrong VDOM: agreement=%s static=%d warnings=%v", entry.Agreement, *entry.StaticFirstMatch, out.Warnings)
+		t.Fatalf("blue live result compared with wrong VDOM: lookup=%#v warnings=%v", entry, out.Warnings)
 	}
 }
 
