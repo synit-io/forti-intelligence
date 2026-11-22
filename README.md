@@ -78,7 +78,7 @@ The MCP does not install policies, edit configuration, execute scripts, or commi
 
 ## Get started
 
-For the source build below, use Make and Go 1.26.0 or newer. The latest stable Go release is recommended and tested in CI. You can also run the container. You need an MCP client, network access to your appliances, and least-privilege API accounts. Core FortiManager reads target 7.4.x or newer. FortiAnalyzer 7.x or newer is optional for log workflows. Release-specific proxy resources and permissions still need verification on your appliances.
+For the source build below, use Make and Go 1.27.4 or newer. CI and the release container build use Go 1.27.4. You can also run the container. You need an MCP client, network access to your appliances, and least-privilege API accounts. Core FortiManager reads target 7.4.x or newer. FortiAnalyzer 7.x or newer is optional for log workflows. Release-specific proxy resources and permissions still need verification on your appliances.
 
 Copy [config.example.yaml](config.example.yaml) to a private local configuration. Set the appliance URLs and allowed ADOMs, then supply its credential variables through your shell, MCP client, or deployment secret store. A `.env` file is not loaded automatically. If using FortiAnalyzer, set its profile `timezone`; remove that profile for FortiManager-only use.
 

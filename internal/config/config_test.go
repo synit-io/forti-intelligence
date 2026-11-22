@@ -150,13 +150,16 @@ func TestValidateHTTPExposure(t *testing.T) {
 
 func TestToolConfiguration(t *testing.T) {
 	for _, tc := range []struct {
-		name, yaml string
-		wantError  bool
+		name, yaml  string
+		rateEnabled bool
+		wantError   bool
 	}{
-		{"default", "server: {}", false},
-		{"disabled", "server:\n  tools:\n    rate_url: false\n    inventory_status: true", false},
-		{"unknown", "server:\n  tools:\n    rate_urll: false", true},
-		{"wrong type", "server:\n  tools:\n    rate_url: disabled", true},
+		{"default", "server: {}", true, false},
+		{"disabled", "server:\n  tools:\n    rate_url: false\n    inventory_status: true", false, false},
+		{"legacy YAML", "defaults: &defaults {rate_url: off, inventory_status: on}\nserver:\n  tools:\n    <<: *defaults", false, false},
+		{"duplicate", "server:\n  tools:\n    rate_url: false\n    rate_url: true", false, true},
+		{"unknown", "server:\n  tools:\n    rate_urll: false", false, true},
+		{"wrong type", "server:\n  tools:\n    rate_url: disabled", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.yaml")
@@ -170,7 +173,7 @@ func TestToolConfiguration(t *testing.T) {
 			if err != nil {
 				return
 			}
-			if cfg.Server.ToolEnabled("rate_url") != (tc.name != "disabled") {
+			if cfg.Server.ToolEnabled("rate_url") != tc.rateEnabled {
 				t.Fatal("wrong rate_url availability")
 			}
 			if !cfg.Server.ToolEnabled("inventory_status") {
