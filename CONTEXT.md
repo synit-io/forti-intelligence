@@ -1,5 +1,7 @@
 # Fortinet traffic investigation
 
+These terms describe the scope of traffic evidence in Forti Intelligence v2.0.0.
+
 ## Language
 
 **Connected ownership candidate**: A scoped FortiGate interface whose configured network contains an IP address. It is not proof of endpoint ownership, ingress, forwarding, reachability, or policy permission; overlapping networks can have multiple candidates.

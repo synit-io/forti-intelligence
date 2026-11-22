@@ -32,4 +32,4 @@ A successful status read proves only that this resource was readable. Log View s
 
 [`get_log_receipt`](get_log_receipt.md), [`map_analyzer_device`](map_analyzer_device.md), [`get_fortianalyzer_data`](get_fortianalyzer_data.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

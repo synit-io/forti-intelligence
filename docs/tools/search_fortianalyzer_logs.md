@@ -60,4 +60,4 @@ A size overflow sets `isError: true`, `error: result_too_large` and `representat
 
 [`map_analyzer_device`](map_analyzer_device.md), [`count_fortianalyzer_logs`](count_fortianalyzer_logs.md), [`get_log_receipt`](get_log_receipt.md), [`get_fortianalyzer_data`](get_fortianalyzer_data.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

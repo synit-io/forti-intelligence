@@ -49,4 +49,4 @@ To hide and block this MCP tool, set `server.tools.rate_url: false`; see [tool a
 
 [`resolve_route`](resolve_route.md), [`check_web_filter`](check_web_filter.md), [`get_ssl_ssh_profile`](get_ssl_ssh_profile.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

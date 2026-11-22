@@ -44,4 +44,4 @@ Per-device `dynamic_mapping` records are omitted unless `include_dynamic_mapping
 
 [`list_firewall_policies`](list_firewall_policies.md), [`get_policy_usage`](get_policy_usage.md), [`get_nat_for_flow`](get_nat_for_flow.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

@@ -46,4 +46,4 @@ These are candidate mappings, not the address or port written on the wire. Verif
 
 [`get_firewall_sessions`](get_firewall_sessions.md), [`search_fortianalyzer_logs`](search_fortianalyzer_logs.md), [`list_policy_objects`](list_policy_objects.md), [`lookup_firewall_policy`](lookup_firewall_policy.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

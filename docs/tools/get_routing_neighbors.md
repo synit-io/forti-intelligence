@@ -32,12 +32,10 @@ The identifiers and values below are fictional. Replace them with your verified 
 
 Returns short `bgp_neighbors`, `ospf_neighbors`, and `sdwan_sla` rows. Available fields include neighbor/router identity and state, plus SD-WAN interface, latency, jitter, loss, and state.
 
-Monitor failures are listed independently under `errors`; available sources still return. Configured routes remain on `resolve_route`.
-
-Neighbor reachability or SLA samples alone do not establish the active route selected for this flow. Use a live routing-table or SD-WAN health read when the missing selection affects the conclusion.
+Each failed monitor has an entry in `errors`. Use neighbor and SLA samples to explain routing changes. To check the installed prefix and next hops for one destination IP, call `resolve_route` with `live: true`, the device and its VDOM. For current SD-WAN health details, use the `sdwan-health` resource on `get_fortigate_settings`. [Route lookup](resolve_route.md) · [FortiGate settings](get_fortigate_settings.md)
 
 ## Related tools
 
 [`resolve_route`](resolve_route.md), [`get_fortigate_settings`](get_fortigate_settings.md), [`get_vpn_status`](get_vpn_status.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

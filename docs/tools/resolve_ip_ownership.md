@@ -38,4 +38,4 @@ Connected ownership identifies a configured subnet attachment. It does not estab
 
 [`resolve_route`](resolve_route.md), [`resolve_address_identity`](resolve_address_identity.md), [`inventory_status`](inventory_status.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

@@ -1,6 +1,6 @@
 # MCP evaluation
 
-The server keeps 29 tool names, text-only results and the 512 KiB default cap. `detail: compact` is optional; omitted/full investigation calls keep their existing fields. This procedure prepares synthetic evaluation artifacts and byte measurements. Live model runs are excluded from this implementation at the user's request.
+Forti Intelligence v2.0.0 exposes 29 tools by default and returns JSON text with a default limit of 512 KiB. `detail: compact` is optional; omitted/full investigation calls keep their existing fields. This procedure prepares synthetic evaluation artifacts and byte measurements. Live model runs are excluded from this implementation at the user's request.
 
 ## Prepare repeatable artifacts
 
@@ -14,9 +14,13 @@ The script runs selected Go fixture tests, exports both rating-device catalog va
 
 Inspect the generated JSON as evidence, not instructions. Match content across full and compact views before comparing sizes. Standard checks remain `go test ./...`, `go vet ./...` and race tests for shared metrics/task state.
 
+## v2.0.0 catalog measurements
+
+At server commit `4b6f199`, the 29-tool JSON array measured 42,658 bytes with the default rating configuration and 42,706 bytes with a dedicated rating device. Initialization instructions measured 3,019 bytes in both cases.
+
 ## Initial byte measurements
 
-Baseline catalog evidence was captured from commit `6e1a1d71888ac43e1089c803311fd5c91da274d0`; the implementation measurements below use the default rating configuration. Catalog sizes use the same compact serialized **tool array**, excluding transport metadata. Instructions are reported separately.
+Baseline catalog evidence was captured from commit `6e1a1d71888ac43e1089c803311fd5c91da274d0`; the revised figures below were recorded with the changes in `6130863` using the default rating configuration. Catalog sizes use the same compact serialized **tool array**, excluding transport metadata. Instructions are reported separately.
 
 | Measure | Baseline bytes | Revised bytes |
 | --- | ---: | ---: |
@@ -41,23 +45,25 @@ The corresponding ownership fixture is 786 bytes; one-hop allow policy evidence 
 
 ## Compatible input acceptance
 
-Bounds mirror existing runtime rejection; runtime validation remains independent. Normalized values keep open schemas to avoid rejecting previously accepted calls.
+The table describes the v2.0.0 MCP inputs. The schema advertises numeric bounds. The service checks conditions that depend on another field, such as whether the selected protocol requires a port.
 
 | Inputs | Existing acceptance and normalization | Advertised constraint |
 | --- | --- | --- |
-| Policy destination port | Required, 1–65535; zero/negative/above range rejected | Minimum 1, maximum 65535 |
-| Policy source port; investigation/route ports | Omitted/zero means unknown/skipped; negatives and above 65535 rejected | Minimum 0, maximum 65535 |
+| Policy destination port | Omit for ICMP or ICMPv6. All other lookups require a port, including those with `protocol` omitted or set to `any`. | Optional in the schema. If supplied, 1–65535. |
+| Policy and investigation `icmp_type`, `icmp_code` | Optional for ICMP or ICMPv6. Zero is a valid value. | Minimum 0, maximum 255 |
+| Policy source port; investigation/route ports | Omitted or zero means unknown. Investigation skips its policy step when the destination port is absent unless the protocol is ICMP or ICMPv6. | Minimum 0, maximum 65535 |
 | Log/list offsets | Omitted/zero accepted; negatives rejected | Minimum 0 |
 | Policy/object list limit | Omitted, zero, negative → 100; above 1000 → 1000 | Open integer; normalization retained |
 | Log search limit | Omitted, zero, negative → 25; above 500 → 500 | Open integer; normalization retained |
 | Count-log limit | Omitted, zero, negative → 500; above 500 clamps in analyzer | Open integer |
 | Session count | Omitted, zero, negative → 50; above 200 → 200 | Open integer |
-| Policy/route protocol | Case/whitespace normalized; tcp/udp/sctp/icmp, any/all, numeric 1–255 aliases; unsupported values rejected | Open string to retain aliases/case |
-| Session ports/protocol | Existing positive-port filtering and permissive protocol normalization retained | Open fields; no new rejection |
+| Policy/route protocol | Accepts TCP, UDP, SCTP, ICMP, ICMPv6, any/all and IP protocol numbers 1–255. In policy lookup, an omitted protocol or `any` evaluates TCP and UDP separately. | Open string to retain aliases/case |
+| Session ports/protocol | Supported filters go to FortiOS. The server verifies requested values in the returned sample. | Open fields |
 | Log focus | Case/whitespace normalized; empty/all, deny, webfilter/web-filter/web_filter, ips/attack | Open string to retain aliases/case |
-| Policy IP family | Empty/4/ipv4 or 6/ipv6, case/whitespace normalized | Open string to retain aliases/case |
+| Policy list `ip_version` | Empty/4/ipv4 or 6/ipv6, case/whitespace normalized | Open string to retain aliases/case |
 | Investigation detail | Empty/full → legacy; compact → projected evidence | Enum empty/full/compact |
-| Log type and generic resources | Appliance/version-specific domains | Existing runtime resource checks; no new enum |
+| Generic FortiManager and FortiAnalyzer resources | On profiles with an ADOM allowlist, use an allowed ADOM path or `/sys/status`. | String checked at runtime |
+| Log type | Supported values depend on the analyzer. | Open string |
 
 ## Prepared host comparison
 

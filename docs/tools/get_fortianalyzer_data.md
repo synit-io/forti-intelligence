@@ -37,4 +37,4 @@ Use `/logview/adom/<adom>/logfields` to discover filter fields, and `/logview/ad
 
 [`fortianalyzer_status`](fortianalyzer_status.md), [`map_analyzer_device`](map_analyzer_device.md), [`get_log_receipt`](get_log_receipt.md), [`search_fortianalyzer_logs`](search_fortianalyzer_logs.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

@@ -28,4 +28,4 @@ An in-progress refresh is shared rather than repeated. The work continues when t
 
 [`inventory_status`](inventory_status.md), [`get_fortigate_interfaces`](get_fortigate_interfaces.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

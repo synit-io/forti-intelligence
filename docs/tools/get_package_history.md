@@ -42,4 +42,4 @@ The name describes the available history evidence; this is not a complete instal
 
 [`get_package_install_status`](get_package_install_status.md), [`lookup_firewall_policy`](lookup_firewall_policy.md), [`get_fortimanager_status`](get_fortimanager_status.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

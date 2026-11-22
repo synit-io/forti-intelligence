@@ -2,9 +2,9 @@
 
 Tool availability is configurable through [`server.tools`](../configuration.md#enable-or-disable-mcp-tools). Only enabled tools are advertised and callable; internal operations of enabled combined tools remain independent.
 
-Forti Intelligence exposes 29 read-only MCP tools. Each page documents its inputs, example call, evidence source, freshness, and limits. The live tool descriptions and schemas remain authoritative for your running server.
+Forti Intelligence v2.0.0 provides 29 read-only MCP tools. Each page documents its inputs, example call, evidence source, freshness, and limits. The live tool descriptions and schemas remain authoritative for your running server.
 
-Start with the [investigation flow guide](../use-cases.md) for task-oriented examples. See [configuration](../configuration.md) for appliance permissions and [operations](../operations.md) for shared caching, scope, and diagnostics.
+For changes to existing tool calls, see the [v2.0.0 upgrade guide](../../README.md#upgrading-to-v200). Start with the [investigation flow guide](../use-cases.md) for task-oriented examples. See [configuration](../configuration.md) for appliance permissions and [operations](../operations.md) for shared caching, scope, and diagnostics.
 
 ## Traffic, ownership, and routing
 

@@ -42,4 +42,4 @@ No match or several plausible matches leave a mapping gap. Do not silently copy 
 
 [`search_fortianalyzer_logs`](search_fortianalyzer_logs.md), [`count_fortianalyzer_logs`](count_fortianalyzer_logs.md), [`get_log_receipt`](get_log_receipt.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

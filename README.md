@@ -1,6 +1,6 @@
 # Forti Intelligence MCP server
 
-Understand why a connection fails, which firewall handles it, and what evidence supports the answer. Forti Intelligence connects an MCP-compatible assistant to your FortiManager and FortiAnalyzer so you can investigate Fortinet networks in plain language.
+Understand why a connection fails, which firewall handles it, and what evidence supports the answer. Forti Intelligence v2.0.0 connects an MCP-compatible assistant to your FortiManager and FortiAnalyzer so you can investigate Fortinet networks in plain language.
 
 The server brings inventory, routing, policies, inspection profiles, current firewall state, and logs into one investigation. It helps the assistant follow traffic across managed firewalls, compare configuration with observed events, and explain the next useful check with the device and policy identifiers an administrator needs.
 
@@ -78,12 +78,14 @@ The MCP does not install policies, edit configuration, execute scripts, or commi
 
 ## Get started
 
-You need Go 1.26.0 or newer or Docker, an MCP client, network access to your appliances, and least-privilege API accounts. Use the latest stable Go release; CI always tests that version. Core FortiManager reads target 7.4.x or newer; FortiAnalyzer 7.x or newer is optional for log workflows. Release-specific proxy resources and permissions still need verification on your appliances.
+For the source build below, use Make and Go 1.26.0 or newer. The latest stable Go release is recommended and tested in CI. You can also run the container. You need an MCP client, network access to your appliances, and least-privilege API accounts. Core FortiManager reads target 7.4.x or newer. FortiAnalyzer 7.x or newer is optional for log workflows. Release-specific proxy resources and permissions still need verification on your appliances.
 
 Copy [config.example.yaml](config.example.yaml) to a private local configuration. Set the appliance URLs and allowed ADOMs, then supply its credential variables through your shell, MCP client, or deployment secret store. A `.env` file is not loaded automatically. If using FortiAnalyzer, set its profile `timezone`; remove that profile for FortiManager-only use.
 
+Once the release tag is available, clone it as shown below. From an existing v2.0.0 source checkout, start at the copy step.
+
 ```sh
-git clone https://github.com/synit-io/forti-intelligence.git
+git clone --branch v2.0.0 https://github.com/synit-io/forti-intelligence.git
 cd forti-intelligence
 cp config.example.yaml ./forti-intelligence.yaml
 chmod 600 ./forti-intelligence.yaml
@@ -92,7 +94,8 @@ export FMG_PASSWORD='replace-with-your-FortiManager-password'
 # Only if you retain the FortiAnalyzer profile:
 export FAZ_USERNAME=api-readonly
 export FAZ_PASSWORD='replace-with-your-FortiAnalyzer-password'
-go build -trimpath -o ./bin/forti-intelligence ./cmd/forti-intelligence
+make build VERSION=2.0.0
+./bin/forti-intelligence --version
 ```
 
 Edit the copied YAML and replace placeholder credentials before starting. Point your MCP client's stdio configuration at the built binary:
@@ -119,6 +122,17 @@ For multiple appliance profiles, permissions, private CAs, Streamable HTTP, bear
 
 Release containers publish to [`synitio/forti-intelligence` on Docker Hub](https://hub.docker.com/r/synitio/forti-intelligence) for AMD64 and ARM64 after CI passes. See [Docker publishing](docs/configuration.md#publish-to-docker-hub) for release tags, manual runs, and required repository secrets.
 
+## Upgrading to v2.0.0
+
+All 29 tool names carry over from v1.2.0. Two changes affect existing calls.
+
+- **Generic appliance reads.** On a profile with an `adoms` allowlist, `get_fortimanager_status` and `get_fortianalyzer_data` require a supported path naming an allowed administrative domain (ADOM), except for `/sys/status`. Replace a global device read such as `/dvmdb/device` with `/dvmdb/adom/<adom>/device`. A filter on a global path does not establish ADOM scope. [Profile configuration](docs/configuration.md#fortimanager-and-fortianalyzer-profiles)
+- **Firewall policy results.** When `protocol` is omitted or set to `any`, `lookup_firewall_policy` returns separate TCP and UDP decisions. A client that reads only `decisions[0]` can miss a denial. Pass the known protocol, or group decisions by manager profile, ADOM, device, VDOM, package, destination and `protocol`. [Policy lookup](docs/tools/lookup_firewall_policy.md)
+
+Policy lookup and traffic investigation now accept IPv4 and IPv6 ping without ports. Route tracing can follow another VDOM on the same firewall. For one destination IP, device and VDOM, `resolve_route` with `live: true` adds installed routes and reported equal-cost next hops. Session lookup sends supported filters to FortiOS and reports how many rows it checked locally. [Investigation examples](docs/use-cases.md) · [Session lookup](docs/tools/get_firewall_sessions.md)
+
+Traffic investigations use the known flow fields and flag log rows whose device or VDOM still needs verification. Analyzer device mapping and log receipt match names and serials. A missing search task can be resubmitted immediately with the returned `new_search` arguments. Raw appliance results preserve large integer IDs, timestamps and counters. [Traffic investigation](docs/tools/investigate_traffic.md) · [Log search](docs/tools/search_fortianalyzer_logs.md)
+
 ## Documentation
 
 - [Visual investigation guide](docs/use-cases.md): traffic and website examples using `SYSTEM.md`.
@@ -137,8 +151,8 @@ Run the project checks before submitting code changes:
 ```sh
 go test -race ./...
 go vet ./...
-go build -trimpath -o bin/forti-intelligence ./cmd/forti-intelligence
-docker build -t forti-intelligence:local .
+make build VERSION=2.0.0
+docker build --build-arg VERSION=2.0.0 -t forti-intelligence:local .
 ```
 
 ## License

@@ -38,10 +38,10 @@ Aliases include `routing-table`, `routing-table6`, `sdwan-health`, `sessions`, `
 
 The ADOM is resolved from inventory when omitted; VDOM defaults to `root`. Proxy waiting is bounded to shortly before the request deadline. An offline FortiGate can still have useful FortiManager configuration, but cannot supply this live evidence.
 
-Prefer the focused session, VPN, HA, and routing-neighbor tools for shorter answers. Use `resolve_route` for configured routing and this tool for operational routing when dynamic routes or live SD-WAN selection matter. Supported resources and response fields depend on the target FortiOS version and permissions.
+Prefer the focused session, VPN, HA, and routing-neighbor tools for shorter answers. For the installed route to one IP, use `resolve_route` with `live: true`, the device and its VDOM. Use `get_fortigate_settings` when you need the raw routing table or live SD-WAN health. Available fields depend on the FortiOS version and permissions. [Route lookup](resolve_route.md)
 
 ## Related tools
 
 [`resolve_route`](resolve_route.md), [`get_firewall_sessions`](get_firewall_sessions.md), [`get_vpn_status`](get_vpn_status.md), [`get_ha_status`](get_ha_status.md), [`get_routing_neighbors`](get_routing_neighbors.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

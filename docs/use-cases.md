@@ -1,6 +1,6 @@
 # Visual investigation guide
 
-These examples show how an assistant combines Forti Intelligence tools with the investigation process in [SYSTEM.md](../SYSTEM.md). All addresses, profiles, devices, timestamps, policy IDs, log names, and outcomes below are fictional. Replace them with verified results; do not treat the example verdicts as real appliance evidence.
+These examples show how an assistant uses Forti Intelligence v2.0.0 tools with the investigation process in [SYSTEM.md](../SYSTEM.md). All addresses, profiles, devices, timestamps, policy IDs, log names, and outcomes below are fictional. Replace them with verified results; do not treat the example verdicts as real appliance evidence.
 
 The server supplies evidence. The assistant resolves scope, selects follow-up reads, reconciles results, and writes the answer. `SYSTEM.md` guides that work; it does not add tools or grant configuration-changing capabilities. The live MCP descriptions and schemas define the available inputs and limits.
 
@@ -56,7 +56,9 @@ For a focused follow-up, use [`resolve_route`](tools/resolve_route.md) with `fol
 
 ### 2. Map analyzer identity and retrieve incident evidence
 
-Resolve the logged device identity for each relevant firewall. FortiAnalyzer ADOMs and device names can differ from FortiManager names. For the branch:
+With `include_logs: true`, `investigate_traffic` searches the original flow once. If it cannot verify the source device or VDOM, check each candidate row’s logged device and VDOM before attributing the event to the branch. For the core firewall, search separately with its logged identity and the addresses it saw after translation.
+
+FortiAnalyzer ADOMs and device names can differ from FortiManager names. To map the branch firewall, use this input.
 
 ```json
 {
@@ -76,7 +78,7 @@ Pass this input to [`map_analyzer_device`](tools/map_analyzer_device.md). In thi
   "adom": "example-adom",
   "device": "Branch-FW-logged",
   "log_type": "traffic",
-  "filter": "srcip=10.1.0.10 and dstip=10.30.0.20 and dstport=443 and proto=6",
+  "filter": "srcip=10.1.0.10 and dstip=10.30.0.20 and dstport=443 and proto=6 and vd=\"root\"",
   "start": "2026-10-02T10:00:00Z",
   "end": "2026-10-02T10:10:00Z",
   "limit": 25

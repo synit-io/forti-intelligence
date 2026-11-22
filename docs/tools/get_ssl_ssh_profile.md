@@ -40,4 +40,4 @@ Configuration does not establish that a client trusts the inspection certificate
 
 [`list_firewall_policies`](list_firewall_policies.md), [`check_web_filter`](check_web_filter.md), [`get_package_install_status`](get_package_install_status.md), [`search_fortianalyzer_logs`](search_fortianalyzer_logs.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

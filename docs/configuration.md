@@ -1,6 +1,6 @@
 # Configuration and deployment
 
-Build and connect a self-hosted server to your own Fortinet appliances. For capabilities and expected answers, start with the [project overview](../README.md).
+Build and connect Forti Intelligence v2.0.0 to your Fortinet appliances. For changes to administrative domain (ADOM) access and policy results since v1.2.0, see the [upgrade guide](../README.md#upgrading-to-v200).
 
 ## Enable or disable MCP tools
 
@@ -20,7 +20,7 @@ These switches control MCP exposure, not internal operations or appliance permis
 
 ## Requirements
 
-- Go 1.26.0 or newer to build locally (latest stable recommended), or Docker to build and run the container
+- Go 1.26.0 or newer and Make for the source build below, or Docker to build and run the container
 - An MCP client supporting stdio or Streamable HTTP
 - FortiManager 7.4.x or newer with JSON API access enabled for inventory and FortiGate investigations
 - FortiAnalyzer 7.x or newer with JSON API access enabled for analyzer status and log workflows (optional for FortiManager-only use)
@@ -61,10 +61,10 @@ The host also uses DNS for destination hostnames. Model-provider connectivity an
 
 ## Configure
 
-Clone the repository and copy [config.example.yaml](../config.example.yaml) to a private local configuration. Edit its appliance URLs, profile names, permitted ADOMs, and FortiAnalyzer timezone. Remove the FortiAnalyzer profile if you only use FortiManager. The loader expands `${ENV_VAR}` references in YAML, so credentials do not need to be written to the file:
+Once the v2.0.0 tag is available, clone the release source as shown below. If you already have that source checked out, start by copying [config.example.yaml](../config.example.yaml) to a private local configuration. Edit its appliance URLs, profile names, permitted ADOMs, and FortiAnalyzer timezone. Remove the FortiAnalyzer profile if you only use FortiManager. The loader expands `${ENV_VAR}` references in YAML, so credentials do not need to be written to the file:
 
 ```sh
-git clone https://github.com/synit-io/forti-intelligence.git
+git clone --branch v2.0.0 https://github.com/synit-io/forti-intelligence.git
 cd forti-intelligence
 cp config.example.yaml ./forti-intelligence.yaml
 chmod 600 ./forti-intelligence.yaml
@@ -127,10 +127,11 @@ Inventory starts in the background. See [inventory freshness and diagnostics](op
 
 ### Start the MCP server
 
-For a local MCP client, stdio is usually the simplest transport. Build a binary or run from the repository:
+For a local MCP client, build the binary with the release version. The `VERSION` value sets both the CLI version and the version reported to MCP clients.
 
 ```sh
-go build -trimpath -o ./bin/forti-intelligence ./cmd/forti-intelligence
+make build VERSION=2.0.0
+./bin/forti-intelligence --version
 ./bin/forti-intelligence --config "$PWD/forti-intelligence.yaml" --transport stdio
 ```
 
@@ -181,7 +182,7 @@ Keep the listener on localhost unless an authenticated reverse proxy and an expl
 After configuring the YAML and exporting its credential variables, build the image locally and bind its HTTP endpoint to localhost:
 
 ```sh
-docker build -t forti-intelligence:local .
+docker build --build-arg VERSION=2.0.0 -t forti-intelligence:local .
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   --publish 127.0.0.1:8080:8080 \
@@ -198,7 +199,7 @@ The build context excludes local configurations, environment files, private keys
 
 ### Publish to Docker Hub
 
-The [Publish container workflow](../.github/workflows/publish.yml) publishes `synitio/forti-intelligence` for `linux/amd64` and `linux/arm64`. It runs on version-tag pushes matching `v*.*.*` and manual runs. The selected tag must exist and be a semantic version such as `v0.1.0` or `v0.2.0-rc.1`. Both paths run the existing Go race tests, `go vet`, and Docker build against that same tag before logging in and publishing.
+The [Publish container workflow](../.github/workflows/publish.yml) publishes `synitio/forti-intelligence` for `linux/amd64` and `linux/arm64`. It runs on version-tag pushes matching `v*.*.*` and manual runs. For a manual run, supply an existing Git tag such as `v2.0.0`. Both paths run the existing Go race tests, `go vet`, and Docker build against that same tag before logging in and publishing.
 
 Configure these GitHub Actions repository secrets before the first run:
 
@@ -207,22 +208,22 @@ Configure these GitHub Actions repository secrets before the first run:
 | `DOCKERHUB_USERNAME` | Docker Hub account with permission to push to `synitio/forti-intelligence`. |
 | `DOCKERHUB_TOKEN` | Docker Hub access token for that account with write permission to the repository. |
 
-Once the workflow changes are on the default branch, publish a release by pushing a version tag on a commit containing them:
+To publish v2.0.0, run these commands from the intended release commit after its checks pass.
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 To publish an existing tag again, open **Actions → Publish container → Run workflow** on the default branch and supply that tag in the `tag` input. The tagged Dockerfile must support the `VERSION` build argument to embed the release version in both the CLI and MCP server metadata.
 
-A stable tag such as `v0.1.0` publishes `0.1.0`, `0.1`, and `latest`. A prerelease such as `v0.2.0-rc.1` publishes only `0.2.0-rc.1`. Manual runs update the same tags, so republishing an older stable release also moves `latest` and its minor alias to that release. Version tags and OCI labels identify the image; `--version` reports its embedded version.
+A successful publish of Git tag `v2.0.0` creates Docker tags `2.0.0`, `2.0` and `latest`. A prerelease such as `v2.0.0-rc.1` publishes only `2.0.0-rc.1`. Manual runs update the same tags, so republishing an older stable release also moves `latest` and its minor alias to that release. Version tags and OCI labels identify the image; `--version` reports its embedded version.
 
 After a successful publish, pull a specific version and use it in place of `forti-intelligence:local` in the Docker run example:
 
 ```sh
-docker pull synitio/forti-intelligence:0.1.0
-docker run --rm synitio/forti-intelligence:0.1.0 --version
+docker pull synitio/forti-intelligence:2.0.0
+docker run --rm synitio/forti-intelligence:2.0.0 --version
 ```
 
 ## Deployment security

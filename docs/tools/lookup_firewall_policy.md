@@ -13,7 +13,7 @@ Find the configured first-match policy for a flow and compare it with bounded li
 | `device` | string | No | Limit candidates to one managed FortiGate name |
 | `vdom` | string | No | Limit candidates to one VDOM; overlapping VDOMs remain separate when omitted |
 | `source_ip` | string | Yes | Source IPv4 or IPv6 address of the flow |
-| `destination_ip` | string | Yes | Destination IP address or FQDN; FQDNs are resolved with the MCP host's DNS and every same-family address is evaluated |
+| `destination_ip` | string | Yes | Destination IP address or FQDN; FQDNs use the MCP host's DNS. Up to 16 addresses matching the source IP family are evaluated. |
 | `source_port` | integer | No | Source port for configured service constraints and live lookup. Constrained services remain tentative when omitted. Omit for ICMP and ICMPv6. |
 | `destination_port` | integer | Conditional | Destination port, 1-65535. Omit for ICMP and ICMPv6. |
 | `protocol` | string | No | tcp, udp, sctp, icmp, icmpv6, any, or an IP protocol number 1-255. Omitted or any evaluates TCP and UDP separately. |
@@ -42,7 +42,7 @@ The identifiers and values below are fictional. Replace them with your verified 
 
 ## Behavior and limits
 
-The lookup first uses refreshed managed-FortiGate interface addresses, canonical networks/subnets, and device-zone membership to identify candidate FortiGates, source/destination interfaces or zones, ADOMs, and policy-package targets, including direct and nested FortiManager device-group membership. `destination_ip` may be a literal address or an FQDN. FQDNs are resolved with the host system's DNS resolver, CNAME targets are recorded when available, duplicate A/AAAA results are removed, and every address matching the source IP family is evaluated independently. A DNS failure is returned as a lookup error.
+The lookup first uses refreshed managed-FortiGate interface addresses, canonical networks/subnets, and device-zone membership to identify candidate FortiGates, source/destination interfaces or zones, ADOMs, and policy-package targets, including direct and nested FortiManager device-group membership. `destination_ip` may be a literal address or an FQDN. FQDNs are resolved with the host system's DNS resolver, CNAME targets are recorded when available, duplicate A/AAAA results are removed, and each selected address is evaluated independently. A DNS failure is returned as a lookup error.
 
 For example, this request automatically selects the inventoried FortiGate and ADOM whose interface contains `10.0.0.1` (such as `10.0.0.0/24`) and derives the source interface:
 
@@ -82,4 +82,4 @@ The result always includes provenance (`profile`, ADOM, device, VDOM, package, p
 
 [`resolve_ip_ownership`](resolve_ip_ownership.md), [`resolve_route`](resolve_route.md), [`list_firewall_policies`](list_firewall_policies.md), [`get_package_install_status`](get_package_install_status.md), [`search_fortianalyzer_logs`](search_fortianalyzer_logs.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

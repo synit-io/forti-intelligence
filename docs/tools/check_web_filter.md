@@ -57,4 +57,4 @@ Provide at least `category` or `url`. `policy_id` requires `device`; copy the ca
 
 [`rate_url`](rate_url.md), [`lookup_firewall_policy`](lookup_firewall_policy.md), [`get_ssl_ssh_profile`](get_ssl_ssh_profile.md), [`get_package_install_status`](get_package_install_status.md), [`search_fortianalyzer_logs`](search_fortianalyzer_logs.md).
 
-[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
