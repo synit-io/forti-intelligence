@@ -9,7 +9,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} 
 
 # base (not static) ships the CA bundle and zoneinfo. The nonroot tag already
 # runs as uid 65532, so the image does not add users.
-FROM gcr.io/distroless/base-debian13:nonroot@sha256:a08d9054afbaf1af9b90fd02cdc7b32236319b5376d374505a41548d42b0c5db
+FROM gcr.io/distroless/base-debian13:nonroot@sha256:83e67481ae9fc8c7a6d211113431fb8085619bed49672e583261111bac184f0d
 LABEL org.opencontainers.image.title="Forti Intelligence" \
       org.opencontainers.image.description="Read-only Fortinet troubleshooting MCP server" \
       org.opencontainers.image.source="https://github.com/synit-io/forti-intelligence" \
