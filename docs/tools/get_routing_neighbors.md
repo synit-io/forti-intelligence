@@ -38,4 +38,4 @@ Each failed monitor has an entry in `errors`. Use neighbor and SLA samples to ex
 
 [`resolve_route`](resolve_route.md), [`get_fortigate_settings`](get_fortigate_settings.md), [`get_vpn_status`](get_vpn_status.md).
 
-[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

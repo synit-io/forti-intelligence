@@ -58,4 +58,4 @@ With `live: true`, `live_route.matches` shows the longest matching prefix and al
 
 [`lookup_firewall_policy`](lookup_firewall_policy.md), [`get_routing_neighbors`](get_routing_neighbors.md), [`get_fortigate_settings`](get_fortigate_settings.md), [`investigate_traffic`](investigate_traffic.md).
 
-[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

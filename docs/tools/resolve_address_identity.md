@@ -42,4 +42,4 @@ This is current identity evidence, not connected-subnet ownership or a historica
 
 [`resolve_ip_ownership`](resolve_ip_ownership.md), [`get_firewall_sessions`](get_firewall_sessions.md), [`search_fortianalyzer_logs`](search_fortianalyzer_logs.md).
 
-[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

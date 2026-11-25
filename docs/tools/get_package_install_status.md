@@ -40,4 +40,4 @@ Use this check when a configured policy and live lookup differ, several candidat
 
 [`lookup_firewall_policy`](lookup_firewall_policy.md), [`get_package_history`](get_package_history.md), [`check_web_filter`](check_web_filter.md).
 
-[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

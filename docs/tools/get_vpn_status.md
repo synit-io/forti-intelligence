@@ -40,4 +40,4 @@ A tunnel reported up does not establish that this flow uses it, matches policy, 
 
 [`resolve_route`](resolve_route.md), [`get_firewall_sessions`](get_firewall_sessions.md), [`get_fortigate_settings`](get_fortigate_settings.md).
 
-[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

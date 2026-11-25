@@ -44,4 +44,4 @@ Prefer the focused session, VPN, HA, and routing-neighbor tools for shorter answ
 
 [`resolve_route`](resolve_route.md), [`get_firewall_sessions`](get_firewall_sessions.md), [`get_vpn_status`](get_vpn_status.md), [`get_ha_status`](get_ha_status.md), [`get_routing_neighbors`](get_routing_neighbors.md).
 
-[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

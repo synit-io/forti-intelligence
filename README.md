@@ -1,6 +1,6 @@
 # Forti Intelligence MCP server
 
-Understand why a connection fails, which firewall handles it, and what evidence supports the answer. Forti Intelligence v2.0.0 connects an MCP-compatible assistant to your FortiManager and FortiAnalyzer so you can investigate Fortinet networks in plain language.
+Understand why a connection fails, which firewall handles it, and what evidence supports the answer. Forti Intelligence v2.1.0 connects an MCP-compatible assistant to your FortiManager and optional FortiAnalyzer so you can investigate Fortinet networks in plain language.
 
 The server brings inventory, routing, policies, inspection profiles, current firewall state, and logs into one investigation. It helps the assistant follow traffic across managed firewalls, compare configuration with observed events, and explain the next useful check with the device and policy identifiers an administrator needs.
 
@@ -66,7 +66,7 @@ flowchart LR
     I --> A["Supported answer<br/>Finding, confidence, limits, next step"]
 ```
 
-The [visual investigation guide](docs/use-cases.md) walks through this two-firewall incident and a website block. It includes tool-call examples, translation handling, decision branches, and a fictional final report.
+The [visual investigation guide](docs/use-cases.md) walks through this two-firewall incident, a website block, and how an operator traces a failed MCP call using its audit ID.
 
 ## What to expect from an answer
 
@@ -82,10 +82,10 @@ For the source build below, use Make and Go 1.27.4 or newer. CI and the release 
 
 Copy [config.example.yaml](config.example.yaml) to a private local configuration. Set the appliance URLs and allowed ADOMs, then supply its credential variables through your shell, MCP client, or deployment secret store. A `.env` file is not loaded automatically. If using FortiAnalyzer, set its profile `timezone`; remove that profile for FortiManager-only use.
 
-Once the release tag is available, clone it as shown below. From an existing v2.0.0 source checkout, start at the copy step.
+Clone the release below. If you already have v2.1.0 checked out, start at the copy step.
 
 ```sh
-git clone --branch v2.0.0 https://github.com/synit-io/forti-intelligence.git
+git clone --branch v2.1.0 https://github.com/synit-io/forti-intelligence.git
 cd forti-intelligence
 cp config.example.yaml ./forti-intelligence.yaml
 chmod 600 ./forti-intelligence.yaml
@@ -94,7 +94,7 @@ export FMG_PASSWORD='replace-with-your-FortiManager-password'
 # Only if you retain the FortiAnalyzer profile:
 export FAZ_USERNAME=api-readonly
 export FAZ_PASSWORD='replace-with-your-FortiAnalyzer-password'
-make build VERSION=2.0.0
+make build VERSION=2.1.0
 ./bin/forti-intelligence --version
 ```
 
@@ -120,17 +120,21 @@ If the client starts with a clean environment, add the credential variables to i
 
 For multiple appliance profiles, permissions, private CAs, Streamable HTTP, bearer authentication, and Docker, follow the [configuration and deployment guide](docs/configuration.md). For freshness, caching, partial reads, or slow requests, see [operations and diagnostics](docs/operations.md). Restrict MCP access to intended users and review your client's model-provider data-sharing settings before sending sensitive inventory, identities, or logs.
 
-Release containers publish to [`synitio/forti-intelligence` on Docker Hub](https://hub.docker.com/r/synitio/forti-intelligence) for AMD64 and ARM64 after CI passes. See [Docker publishing](docs/configuration.md#publish-to-docker-hub) for release tags, manual runs, and required repository secrets.
+The `synitio/forti-intelligence:2.1.0` image supports Linux on AMD64 and ARM64. [Run with Docker](docs/configuration.md#run-with-docker)
 
-## MCP audit log
+## Upgrading to v2.1.0
 
-Current source adds audit logging after v2.0.0. Each completed MCP action produces one JSON record. The HTTP container writes records to stdout. Local stdio clients receive protocol messages on stdout and audit records on stderr.
+Existing v2.0.0 configurations and tool calls work without edits. Audit logging starts automatically on upgrade.
 
-Use the audit ID to find the tool's diagnostics. To send the same records to a collector, set `server.audit.syslog.target`. Use `tls://logs.example.net:6514` for encrypted forwarding. [Syslog configuration](docs/configuration.md#audit-forwarding) · [Audit fields and coverage](docs/operations.md#mcp-audit-records)
+### MCP audit log
+
+Each action that reaches MCP dispatch produces one JSON record on completion. HTTP deployments write it to stdout. Local stdio clients receive protocol messages on stdout and audit records on stderr. The record includes the method, registered tool name when applicable, outcome, and duration. Arguments and results stay out of the audit record.
+
+Use `audit_id` to find matching tool diagnostics. Set `server.audit.syslog.target` to forward a copy to a collector. [Syslog configuration](docs/configuration.md#audit-forwarding) · [Audit fields and coverage](docs/operations.md#mcp-audit-records)
 
 ## Upgrading to v2.0.0
 
-All 29 tool names carry over from v1.2.0. Two changes affect existing calls.
+If upgrading from v1.2.0, all 29 tool names carry over. Two changes introduced in v2.0.0 affect existing calls.
 
 - **Generic appliance reads.** On a profile with an `adoms` allowlist, `get_fortimanager_status` and `get_fortianalyzer_data` require a supported path naming an allowed administrative domain (ADOM), except for `/sys/status`. Replace a global device read such as `/dvmdb/device` with `/dvmdb/adom/<adom>/device`. A filter on a global path does not establish ADOM scope. [Profile configuration](docs/configuration.md#fortimanager-and-fortianalyzer-profiles)
 - **Firewall policy results.** When `protocol` is omitted or set to `any`, `lookup_firewall_policy` returns separate TCP and UDP decisions. A client that reads only `decisions[0]` can miss a denial. Pass the known protocol, or group decisions by manager profile, ADOM, device, VDOM, package, destination and `protocol`. [Policy lookup](docs/tools/lookup_firewall_policy.md)
@@ -141,10 +145,11 @@ Traffic investigations use the known flow fields and flag log rows whose device 
 
 ## Documentation
 
-- [Visual investigation guide](docs/use-cases.md): traffic and website examples using `SYSTEM.md`.
+- [Visual investigation guide](docs/use-cases.md) for traffic, website, and MCP audit examples.
 - [Tool reference](docs/tools/README.md): all 29 tools, each with a dedicated page for inputs, examples, behavior, freshness, and limits.
 - [Configuration and deployment](docs/configuration.md): appliance requirements, permissions, profiles, and client connections.
 - [Operations and diagnostics](docs/operations.md): inventory, caching, error handling, and request timing.
+- [MCP evaluation](docs/mcp-evaluation.md) for repeatable catalog and result checks.
 - [SYSTEM.md](SYSTEM.md): example assistant investigation and reporting instructions.
 - [CONTEXT.md](CONTEXT.md): scope and ownership terms used in reports.
 
@@ -157,8 +162,8 @@ Run the project checks before submitting code changes:
 ```sh
 go test -race ./...
 go vet ./...
-make build VERSION=2.0.0
-docker build --build-arg VERSION=2.0.0 -t forti-intelligence:local .
+make build VERSION=2.1.0
+docker build --build-arg VERSION=2.1.0 -t forti-intelligence:local .
 ```
 
 ## License

@@ -1,8 +1,8 @@
 # Visual investigation guide
 
-These examples show how an assistant uses Forti Intelligence v2.0.0 tools with the investigation process in [SYSTEM.md](../SYSTEM.md). All addresses, profiles, devices, timestamps, policy IDs, log names, and outcomes below are fictional. Replace them with verified results; do not treat the example verdicts as real appliance evidence.
+These Forti Intelligence v2.1.0 examples cover a blocked connection, a blocked website, and a failed MCP call. All names, addresses, identifiers, times, and outcomes are fictional.
 
-The server supplies evidence. The assistant resolves scope, selects follow-up reads, reconciles results, and writes the answer. `SYSTEM.md` guides that work; it does not add tools or grant configuration-changing capabilities. The live MCP descriptions and schemas define the available inputs and limits.
+For network incidents, the assistant follows the investigation process in [SYSTEM.md](../SYSTEM.md). Check the tools advertised by the running server before each workflow or follow-up. An administrator can disable individual tools. If a needed read is unavailable, identify the evidence gap. The audit example is for an operator with access to the server logs.
 
 ## Example 1: Find a block across two firewalls
 
@@ -56,7 +56,7 @@ For a focused follow-up, use [`resolve_route`](tools/resolve_route.md) with `fol
 
 ### 2. Map analyzer identity and retrieve incident evidence
 
-With `include_logs: true`, `investigate_traffic` searches the original flow once. If it cannot verify the source device or VDOM, check each candidate row’s logged device and VDOM before attributing the event to the branch. For the core firewall, search separately with its logged identity and the addresses it saw after translation.
+To include branch logs in the first call, set `include_logs: true`, `log_profile`, `log_adom`, `log_start`, and `log_end` for the incident. The tool searches the original flow once when it has a concrete destination. If it cannot verify the source device or VDOM, check those fields on each returned row. For a separate search, use the branch mapping below. For the core, use its own logged identity and the addresses it saw after translation.
 
 FortiAnalyzer ADOMs and device names can differ from FortiManager names. To map the branch firewall, use this input.
 
@@ -143,12 +143,13 @@ Use the client's actual destination address when available. MCP-host DNS may dif
 
 ```mermaid
 flowchart TD
-    Q["Frame client, URL, destination addresses, and HTTPS flow"] --> I["investigate_traffic with url, or resolve_route with follow=true"]
-    I --> P["Identify carrying policy and filtering profiles at each supported hop"]
-    P --> R["rate_url once: reuse global FortiGuard category"]
-    R --> W["check_web_filter per hop: category, url, scope, policy_id"]
-    W --> C{"Is the configuration read complete?"}
-    C -->|No| F["Repeat shortly; background reads fill shared caches"]
+    Q["Frame client, URL, destination addresses, and HTTPS flow"] --> I["investigate_traffic with url"]
+    I --> C{"Is filtering evidence sufficient for each hop?"}
+    C -->|Missing scope or policy| P["Resolve the path and carrying policy"]
+    P -->|Scope resolved| W["check_web_filter with URL, available rating, and verified scope"]
+    P -->|Scope still unknown| A
+    W --> C
+    C -->|Reads still in progress| F["Wait briefly for background reads"]
     F -->|Useful retry| W
     F -->|Persistent read gap| A
     C -->|Yes| S["Check SSL/SSH profile and stored package installation when relevant"]
@@ -158,7 +159,7 @@ flowchart TD
     L --> A
 ```
 
-[`investigate_traffic`](tools/investigate_traffic.md) with `url` rates once and checks each traced hop. For separate reads, first trace the path; then call [`rate_url`](tools/rate_url.md) with a verified device. If the server advertises a configured rating FortiGate, rating can run while the path is being resolved.
+With `url`, [`investigate_traffic`](tools/investigate_traffic.md) rates the URL once and reuses the result across traced hops. It skips filtering on a configured denial. If it cannot identify a unique carrying policy, it reports candidate profiles for that hop. For separate reads, trace the path and use [`rate_url`](tools/rate_url.md) once if you still need a category. A configured rating FortiGate can supply that rating while you resolve the path.
 
 Suppose the rating returns category `52`, and hop 1's carrying policy is `44`. Call [`check_web_filter`](tools/check_web_filter.md):
 
@@ -174,13 +175,23 @@ Suppose the rating returns category `52`, and hop 1's carrying policy is `44`. C
 }
 ```
 
-Use the actual returned category and each hop's own carrying policy. Always include the concrete URL: static URL filters and local rating overrides can change the result. When rating fails, inspect `rating.error` and `rating.attempt_errors`; a URL-only check still evaluates URL rules but leaves category actions unknown. Repeat `complete: false` checks after a short pause rather than treating incomplete profile or policy coverage as permission.
+Use the returned category and each hop's own carrying policy. Include the concrete URL because static URL filters and local rating overrides can change the decision. When rating fails, inspect `rating.error` and `rating.attempt_errors`. A URL-only check still evaluates URL rules and leaves category actions unknown. For `complete: false`, retry briefly if reads are still running. Report persistent scope or permission gaps.
 
 Read [`get_ssl_ssh_profile`](tools/get_ssl_ssh_profile.md) for the carrying policy's inspection profile when HTTPS path visibility or certificate handling matters. Check [`get_package_install_status`](tools/get_package_install_status.md) when the package is modified or differs from current lookup. Stored filtering is configuration evidence, not proof of live enforcement.
 
 For an observed failure, map each relevant device and search `log_type: webfilter` in its analyzer scope and incident window. Correlate the tuple as seen at that hop, policy, VDOM, and time; traffic admission can succeed before inspection blocks. Keep partial searches and logging gaps explicit.
 
 An expected answer identifies which hop and profile has a configured or observed block, distinguishes URL/category decisions from firewall admission and inspection conditions, states confidence, and gives one concrete next check. Do not claim that category rating proves the site is reachable or that a missing block log proves it was allowed.
+
+## Example 3: Trace a failed MCP call
+
+> A log search failed around `10:05 UTC`. Which call failed, and what did the server report?
+
+1. Find the `tools/call` completion record for `search_fortianalyzer_logs` near that time. HTTP writes audit records to stdout. For a stdio client, inspect the server's stderr. A configured syslog collector can also hold a copy.
+2. Take the `audit_id` from that record and search server diagnostics for the same value. For example, a record with `outcome: "error"` and a matching `MCP tool failed` diagnostic with `kind: "permission_denied"` identifies a rejected search. Check the reported resource and the analyzer account's permissions.
+3. If the collector has no matching entry, check the local stream and stderr for a forwarding warning. The server writes locally first and does not replay missed records. HTTP authentication failures occur before MCP dispatch and leave no MCP audit record.
+
+An audit record identifies a completed server action. Use FortiAnalyzer logs to establish what happened to the network flow. [Audit fields and coverage](operations.md#mcp-audit-records) · [Configure syslog forwarding](configuration.md#audit-forwarding)
 
 ## How the guide relates to SYSTEM.md
 

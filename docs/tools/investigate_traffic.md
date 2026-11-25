@@ -70,4 +70,4 @@ The investigation evaluates downstream hops using the original flow tuple and st
 
 [`resolve_route`](resolve_route.md), [`lookup_firewall_policy`](lookup_firewall_policy.md), [`get_firewall_sessions`](get_firewall_sessions.md), [`map_analyzer_device`](map_analyzer_device.md), [`search_fortianalyzer_logs`](search_fortianalyzer_logs.md).
 
-[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

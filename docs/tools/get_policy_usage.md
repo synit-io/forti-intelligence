@@ -46,4 +46,4 @@ When `name` is set, `where_used` scans firewall, legacy IPv6, security, and prox
 
 [`list_firewall_policies`](list_firewall_policies.md), [`list_policy_objects`](list_policy_objects.md), [`get_firewall_sessions`](get_firewall_sessions.md).
 
-[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

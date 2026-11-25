@@ -1,6 +1,6 @@
 # Operations, freshness, and diagnostics
 
-Use this reference to diagnose stale, partial, denied, offline or slow reads in Forti Intelligence v2.0.0. See [configuration](configuration.md) for setup and [individual tools](tools/README.md) for tool-specific behavior.
+Use this reference to diagnose stale, partial, denied, offline or slow reads in Forti Intelligence v2.1.0. See [configuration](configuration.md) for setup and [individual tools](tools/README.md) for tool-specific behavior.
 
 ## Shared tool contract
 
@@ -23,7 +23,7 @@ Each client action that reaches MCP dispatch produces one JSON line at completio
 
 The field list excludes credentials, arguments, results, and error messages. A shared HTTP bearer token cannot identify an individual operator.
 
-The service writes locally first. Each record has a one-second budget for syslog, including waiting for the connection. If forwarding fails, later records can reconnect. The service leaves missed records in the local stream and skips replay. A process killed during an action may leave no completion record for that action. [Configure syslog forwarding](configuration.md#audit-forwarding)
+The service writes locally first. Each record has a one-second budget for syslog, including waiting for the connection. If forwarding fails, later records can reconnect. The service leaves missed records in the local stream and skips replay. A process killed during an action may leave no completion record for that action. [Configure syslog forwarding](configuration.md#audit-forwarding) · [Trace a failed MCP call](use-cases.md#example-3-trace-a-failed-mcp-call)
 
 ## Inventory freshness and scope
 

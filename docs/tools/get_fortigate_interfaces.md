@@ -42,4 +42,4 @@ The ADOM is resolved from inventory when omitted. Equal interface or zone names 
 
 [`resolve_ip_ownership`](resolve_ip_ownership.md), [`resolve_route`](resolve_route.md), [`get_fortigate_settings`](get_fortigate_settings.md).
 
-[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)

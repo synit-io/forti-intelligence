@@ -54,4 +54,4 @@ A short or empty sample leaves other sessions unverified. A matching row may be 
 
 [`get_nat_for_flow`](get_nat_for_flow.md), [`search_fortianalyzer_logs`](search_fortianalyzer_logs.md), [`lookup_firewall_policy`](lookup_firewall_policy.md).
 
-[v2.0.0 tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
+[Tool index](README.md) · [Shared operation and freshness rules](../operations.md) · [Investigation flow guide](../use-cases.md)
