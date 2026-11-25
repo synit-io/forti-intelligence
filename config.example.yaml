@@ -6,6 +6,12 @@ server:
   http_bearer_token: "${FORTI_MCP_HTTP_TOKEN}"
   # Set only when a trusted reverse proxy authenticates every request.
   # http_trusted_proxy: true
+  # Audit JSON goes to stdout for HTTP and stderr for stdio.
+  # Uncomment to also forward audit records to a syslog collector.
+  # audit:
+  #   syslog:
+  #     target: "tls://logs.example.net:6514"
+  #     ca_file: "/etc/forti-intelligence/syslog-ca.pem"  # optional private CA
   refresh_interval: "1h"
   refresh_timeout: "2m"
   request_timeout: "30s"

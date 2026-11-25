@@ -122,6 +122,12 @@ For multiple appliance profiles, permissions, private CAs, Streamable HTTP, bear
 
 Release containers publish to [`synitio/forti-intelligence` on Docker Hub](https://hub.docker.com/r/synitio/forti-intelligence) for AMD64 and ARM64 after CI passes. See [Docker publishing](docs/configuration.md#publish-to-docker-hub) for release tags, manual runs, and required repository secrets.
 
+## MCP audit log
+
+Current source adds audit logging after v2.0.0. Each completed MCP action produces one JSON record. The HTTP container writes records to stdout. Local stdio clients receive protocol messages on stdout and audit records on stderr.
+
+Use the audit ID to find the tool's diagnostics. To send the same records to a collector, set `server.audit.syslog.target`. Use `tls://logs.example.net:6514` for encrypted forwarding. [Syslog configuration](docs/configuration.md#audit-forwarding) · [Audit fields and coverage](docs/operations.md#mcp-audit-records)
+
 ## Upgrading to v2.0.0
 
 All 29 tool names carry over from v1.2.0. Two changes affect existing calls.

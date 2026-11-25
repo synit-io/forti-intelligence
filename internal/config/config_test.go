@@ -16,6 +16,56 @@ func TestDefaultRefreshIntervalIsHourly(t *testing.T) {
 	}
 }
 
+func TestAuditSyslogConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.yaml")
+	for _, tc := range []struct {
+		target, caFile string
+		valid          bool
+	}{
+		{"tcp://logs.example.net:514", "", true},
+		{"tls://[::1]:6514", "", true},
+		{"logs.example.net:6514", "", false},
+		{"udp://logs.example.net:514", "", false},
+		{"tls://:6514", "", false},
+		{"tls://logs.example.net", "", false},
+		{"tls://logs.example.net:65536", "", false},
+		{"tls://user:secret@logs.example.net:6514", "", false},
+		{"tls://logs.example.net:6514/path", "", false},
+		{"tls://logs.example.net:6514?x=1", "", false},
+		{"tcp://logs.example.net:514", "private.pem", false},
+		{"", "private.pem", false},
+	} {
+		t.Run(tc.target+" "+tc.caFile, func(t *testing.T) {
+			contents := "server:\n  audit:\n    syslog:\n      target: \"" + tc.target + "\"\n      ca_file: \"" + tc.caFile + "\"\n"
+			if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, Load error=%v", tc.valid, err)
+			}
+			if tc.valid && cfg.Server.Audit.Syslog.Target != tc.target {
+				t.Fatalf("target = %q, want %q", cfg.Server.Audit.Syslog.Target, tc.target)
+			}
+			if err != nil && strings.Contains(err.Error(), "secret") {
+				t.Fatalf("configuration error exposed a credential: %v", err)
+			}
+		})
+	}
+	for _, settings := range []string{
+		"      targte: tls://logs.example.net:6514",
+		"      target: tls://logs.example.net:6514\n      ca_file: " + path + ".missing",
+		"      target: tls://logs.example.net:6514\n      ca_file: " + path,
+	} {
+		if err := os.WriteFile(path, []byte("server:\n  audit:\n    syslog:\n"+settings+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Fatalf("accepted invalid settings: %s", settings)
+		}
+	}
+}
+
 func TestLoadSelectsIndependentNamedProfiles(t *testing.T) {
 	t.Setenv("FMG_USER", "fmg-reader")
 	t.Setenv("FMG_PASS", "fmg-secret")

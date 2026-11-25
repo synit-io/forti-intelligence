@@ -146,7 +146,7 @@ func addReadTool[In any](s *Server, name, title, description string, run func(co
 				requests := stats.Snapshot()
 				elapsed := time.Since(started)
 				s.recordTool(name, outcome, elapsed, requests.LaneWait, requests.Requests)
-				attrs := []any{"tool", name, "outcome", outcome, "duration", elapsed.Round(time.Millisecond), "fortinet_requests", requests.Requests}
+				attrs := []any{"tool", name, "outcome", outcome, "duration", elapsed.Round(time.Millisecond), "fortinet_requests", requests.Requests, "audit_id", auditID(ctx)}
 				if requests.Requests > 0 {
 					attrs = append(attrs, "lane_wait", requests.LaneWait.Round(time.Millisecond), "wire_time", requests.Wire.Round(time.Millisecond),
 						"retries", requests.Retries, "slowest", requests.Slowest.Round(time.Millisecond), "slowest_resource", requests.SlowestResource)
@@ -155,7 +155,7 @@ func addReadTool[In any](s *Server, name, title, description string, run func(co
 			}()
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					s.logger.Error("MCP tool panicked", "tool", name, "panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
+					s.logger.Error("MCP tool panicked", "tool", name, "panic", fmt.Sprint(recovered), "stack", string(debug.Stack()), "audit_id", auditID(ctx))
 					response, output = nil, nil
 					err = fmt.Errorf("internal error in %s: %v; the server recovered and stays available, retry with a narrower scope and report this to the server administrator", name, recovered)
 				}
@@ -164,11 +164,11 @@ func addReadTool[In any](s *Server, name, title, description string, run func(co
 			if runErr != nil {
 				logs, usable := value.(fortinet.LogSearchResult)
 				if name != "search_fortianalyzer_logs" || !usable || !service.LogResultUsable(logs) {
-					return s.toolError(req, name, runErr)
+					return s.toolError(ctx, req, name, runErr)
 				}
 				// Return a constructed error result with a nil Go error: the SDK
 				// otherwise replaces it with a plain error and loses task state.
-				s.toolError(req, name, runErr)
+				s.toolError(ctx, req, name, runErr)
 				value = logs
 			}
 			response, output, err = s.encodeResult(name, value)
@@ -176,10 +176,11 @@ func addReadTool[In any](s *Server, name, title, description string, run func(co
 				response.IsError = true
 			}
 			if err != nil {
-				return s.toolError(req, name, err)
+				return s.toolError(ctx, req, name, err)
 			}
 			return response, output, nil
 		})
+	s.auditTools[name] = struct{}{}
 }
 
 func (s *Server) registerTools() {

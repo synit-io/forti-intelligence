@@ -8,6 +8,23 @@ Every tool input field carries a schema description, so an MCP client can see ac
 
 Raw appliance responses preserve the digits of large JSON integers. Clients that correlate log timestamps or counters should parse the result text with an integer type that can hold those values.
 
+## MCP audit records
+
+Each client action that reaches MCP dispatch produces one JSON line at completion. This includes discovery, tool listing, and tool calls that succeed, fail validation, or return an MCP error. A call to an unknown or disabled tool records the failed `tools/call` and omits the tool name. An explicit `refresh_inventory` call produces one record. Scheduled refreshes, appliance retries, HTTP probes, and requests rejected before MCP dispatch fall outside this log.
+
+| Field | Meaning |
+| --- | --- |
+| `timestamp` | UTC completion time. |
+| `audit_id` | Server-generated identifier for this action. Search tool diagnostics for the same ID. |
+| `transport` | `http` or `stdio`. |
+| `method`, `tool` | MCP method and, for calls to a registered tool, its name. |
+| `outcome` | `ok` or `error`. A tool result marked `isError` counts as an error. |
+| `duration_ms` | Elapsed action time before audit output, in milliseconds. |
+
+The field list excludes credentials, arguments, results, and error messages. A shared HTTP bearer token cannot identify an individual operator.
+
+The service writes locally first. Each record has a one-second budget for syslog, including waiting for the connection. If forwarding fails, later records can reconnect. The service leaves missed records in the local stream and skips replay. A process killed during an action may leave no completion record for that action. [Configure syslog forwarding](configuration.md#audit-forwarding)
+
 ## Inventory freshness and scope
 
 Inventory and its ownership index are built only in the background: the first refresh starts at process start and later ones run every `server.refresh_interval`, each bounded by `server.refresh_timeout`. The MCP transport answers immediately, so stdio clients do not hit their startup timeout. Until the first snapshot is published, `resolve_ip_ownership` and `resolve_route` return `ready: false` with `refresh_in_progress: true`, and inventory-based lookups return a "still loading" error that says to retry shortly. The only other refresh trigger is an explicit `refresh_inventory` call; nothing refreshes because data looks old or a device is offline.

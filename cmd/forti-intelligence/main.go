@@ -75,6 +75,11 @@ func main() {
 		logger.Error("configuration failed", "error", err)
 		os.Exit(2)
 	}
+	audit, err := mcpserver.NewAuditLog(nil, cfg.Server.Audit.Syslog, logger)
+	if err != nil {
+		logger.Error("configuration failed", "error", err)
+		os.Exit(2)
+	}
 	logEffectiveConfiguration(logger, *configPath, cfg)
 
 	managers, analyzers, closeClients, err := buildClients(cfg, logger)
@@ -90,6 +95,7 @@ func main() {
 			os.Exit(exitCode)
 		}
 	}()
+	defer audit.Close()
 	defer func() {
 		if err := closeClients(); err != nil {
 			logger.Warn("client shutdown failed", "error", err)
@@ -123,7 +129,7 @@ func main() {
 		}()
 		app.SetRatingClient(strings.TrimSuffix(ratingProfile.Name, "/rating"), ratingClient)
 	}
-	mcpServer := mcpserver.New(app, cfg.Server, logger)
+	mcpServer := mcpserver.NewWithAudit(app, cfg.Server, logger, audit)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

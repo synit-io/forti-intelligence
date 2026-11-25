@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/synit-io/forti-intelligence/internal/config"
 	"github.com/synit-io/forti-intelligence/internal/inventory"
 	"github.com/synit-io/forti-intelligence/internal/mcpserver"
@@ -185,6 +186,46 @@ func TestCLIVersionAndConfigurationFailure(t *testing.T) {
 	}
 }
 
+func TestCLIStdioAuditsToStderr(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("profiles: []\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := cliCommand("--config", configPath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "audit-test", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, callErr := session.CallTool(ctx, &mcp.CallToolParams{Name: "inventory_status", Arguments: map[string]any{}})
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if callErr != nil || result.IsError {
+		t.Fatalf("stdio call failed: %v, %v", result, callErr)
+	}
+	calls := 0
+	for line := range strings.SplitSeq(stderr.String(), "\n") {
+		var record struct {
+			ID                               string `json:"audit_id"`
+			Method, Tool, Transport, Outcome string
+		}
+		if json.Unmarshal([]byte(line), &record) == nil && record.Method == "tools/call" {
+			calls++
+			if record.ID == "" || record.Tool != "inventory_status" || record.Outcome != "ok" || record.Transport != "stdio" {
+				t.Errorf("unexpected stdio audit record: %s", line)
+			}
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("expected one JSON tool audit record on stderr, got %d: %s", calls, &stderr)
+	}
+}
+
 func TestCLIHTTPStartsAndStopsOnSignal(t *testing.T) {
 	appliance := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -202,12 +243,30 @@ func TestCLIHTTPStartsAndStopsOnSignal(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"result": results})
 	}))
 	defer appliance.Close()
+	collector, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer collector.Close()
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	contents := fmt.Sprintf("server:\n  http_bearer_token: test-token\nprofiles:\n  - name: test\n    product: fortimanager\n    url: %s\n    api_key: test-api-key\n    allow_insecure_http: true\n", appliance.URL)
+	contents := fmt.Sprintf(`server:
+  http_bearer_token: test-token
+  audit:
+    syslog:
+      target: "tcp://%s"
+profiles:
+  - name: test
+    product: fortimanager
+    url: %s
+    api_key: test-api-key
+    allow_insecure_http: true
+`, collector.Addr(), appliance.URL)
 	if err := os.WriteFile(configPath, []byte(contents), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cmd := cliCommand("--config", configPath, "--transport", "http", "--listen", "127.0.0.1:0", "--log-json")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -274,6 +333,21 @@ func TestCLIHTTPStartsAndStopsOnSignal(t *testing.T) {
 	if !ready {
 		t.Fatal("CLI inventory never became ready")
 	}
+	req, err := http.NewRequest(http.MethodPost, "http://"+address+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	response, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("tools/list returned %s", response.Status)
+	}
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)
 	}
@@ -289,5 +363,20 @@ func TestCLIHTTPStartsAndStopsOnSignal(t *testing.T) {
 	if conn, err := net.DialTimeout("tcp", address, 200*time.Millisecond); err == nil {
 		conn.Close()
 		t.Fatal("CLI left its HTTP listener open")
+	}
+	var record struct{ Method, Transport, Outcome string }
+	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil || record.Method != "tools/list" || record.Transport != "http" || record.Outcome != "ok" {
+		t.Fatalf("expected exactly one tools/list audit record on stdout: %v, %s", err, &stdout)
+	}
+	_ = collector.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second))
+	conn, err := collector.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	frame, err := io.ReadAll(conn)
+	if err != nil || !strings.HasSuffix(string(frame), " "+strings.TrimSpace(stdout.String())) {
+		t.Fatalf("expected stdout record at syslog collector, got %q: %v", frame, err)
 	}
 }

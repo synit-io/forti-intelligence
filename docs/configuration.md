@@ -18,6 +18,24 @@ All 29 tool names are shown in [config.example.yaml](../config.example.yaml) and
 
 These switches control MCP exposure, not internal operations or appliance permissions. For example, disabling `rate_url` alone does not stop `investigate_traffic` from rating a supplied URL, and disabling log search does not remove combined investigation log reads. Disable the combined tool too when that access path is unwanted. Background inventory, caches and generic read tools remain independent. Descriptions and result hints may reference disabled tools; clients must check the advertised catalog before following them.
 
+## Audit forwarding
+
+Audit logging is automatic in source versions after v2.0.0. HTTP writes one JSON record per completed MCP action to stdout. Stdio writes the same format to stderr, alongside diagnostics. Audit output uses JSON regardless of `--log-json`.
+
+Add one collector under `server.audit.syslog` to also send each record there. Restart the service after changing this configuration.
+
+```yaml
+server:
+  audit:
+    syslog:
+      target: "tls://logs.example.net:6514"
+      ca_file: "/etc/forti-intelligence/syslog-ca.pem"  # optional private CA
+```
+
+Use an explicit host and port. With `tls://`, the server verifies the collector's hostname and certificate using system trust. For a private certificate authority (CA), mount its PEM file into the container and set `ca_file` to its path. Use `tcp://host:port` only when plaintext forwarding is intended. Configure the receiver for RFC 5424 messages with a byte-count prefix (octet counting).
+
+An invalid target or unreadable CA file prevents startup. An unreachable collector or failed TLS handshake produces a warning on stderr. Tool calls continue and retain their local audit records. [Audit fields and delivery limits](operations.md#mcp-audit-records)
+
 ## Requirements
 
 - Go 1.27.4 or newer and Make for the source build below, or Docker to build and run the container

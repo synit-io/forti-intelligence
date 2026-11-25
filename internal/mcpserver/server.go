@@ -28,28 +28,40 @@ const (
 var ServerVersion = "0.1.0"
 
 type Server struct {
-	app       *service.Service
-	config    config.ServerConfig
-	logger    *slog.Logger
-	mcp       *mcp.Server
-	toolMu    sync.Mutex
-	toolStats map[string]*toolStat
+	app        *service.Service
+	config     config.ServerConfig
+	logger     *slog.Logger
+	mcp        *mcp.Server
+	audit      *AuditLog
+	auditTools map[string]struct{}
+	toolMu     sync.Mutex
+	toolStats  map[string]*toolStat
 }
 
 func New(app *service.Service, serverConfig config.ServerConfig, logger *slog.Logger) *Server {
+	return NewWithAudit(app, serverConfig, logger, nil)
+}
+
+func NewWithAudit(app *service.Service, serverConfig config.ServerConfig, logger *slog.Logger, audit *AuditLog) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if audit == nil {
+		audit = &AuditLog{logger: logger}
+	}
 	server := &Server{
-		app:    app,
-		config: serverConfig,
-		logger: logger,
+		app:        app,
+		config:     serverConfig,
+		logger:     logger,
+		audit:      audit,
+		auditTools: make(map[string]struct{}),
 	}
 	server.mcp = mcp.NewServer(&mcp.Implementation{Name: ServerName, Version: ServerVersion}, &mcp.ServerOptions{
 		Logger:       sdkLogger(logger),
 		Instructions: server.toolInstructions(serverInstructions + " " + trafficReportingInstructions + " " + routeTraceGuidance + " " + "Start IP ownership questions with resolve_ip_ownership. Reuse its scoped interface, zone and package candidates instead of full interface dumps. Inspect freshness and errors; retain overlaps separately. Connected ownership is not forwarding: use resolve_route for configured routing, and the live routing table when dynamic routing or SD-WAN health can change the result. For website questions, trace the client's path with follow=true, rate the URL once, and check filtering at every scoped hop with the carrying policy when known. Inventory refreshes in the background; call refresh_inventory only for requested current data or a known FortiManager change. Resume timed-out FortiAnalyzer searches with their task_id. Act on error hints before retrying."),
 	})
 	server.registerTools()
+	server.mcp.AddReceivingMiddleware(server.auditRequests)
 	return server
 }
 
@@ -191,7 +203,7 @@ func narrowingAdvice(tool string) string {
 	}
 }
 
-func (s *Server) toolError(req *mcp.CallToolRequest, tool string, err error) (*mcp.CallToolResult, any, error) {
+func (s *Server) toolError(ctx context.Context, req *mcp.CallToolRequest, tool string, err error) (*mcp.CallToolResult, any, error) {
 	attrs := []any{"tool", tool, "error", err}
 	if details := fortinet.DescribeError(err); details.Kind != "" {
 		attrs = append(attrs, "kind", details.Kind, "retryable", details.Retryable)
@@ -214,7 +226,7 @@ func (s *Server) toolError(req *mcp.CallToolRequest, tool string, err error) (*m
 		// logging request arguments or credentials.
 		attrs = append(attrs, "session_id", req.Session.ID())
 	}
-	s.logger.Error("MCP tool failed", attrs...)
+	s.logger.Error("MCP tool failed", append(attrs, "audit_id", auditID(ctx))...)
 	return nil, nil, err
 }
 

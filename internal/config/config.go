@@ -85,6 +85,7 @@ type ServerConfig struct {
 	PrefetchCachedPolicies bool `yaml:"prefetch_cached_policies"`
 	// Tools overrides MCP tool availability by name. Omitted tools stay enabled.
 	Tools map[string]bool `yaml:"tools,omitempty"`
+	Audit AuditConfig     `yaml:"audit,omitempty"`
 }
 
 // DefaultMaxResultBytes is the default inner JSON result cap (512 KiB).
@@ -200,6 +201,9 @@ func Load(path string) (Config, error) {
 
 func (c *Config) normalizeAndValidate() error {
 	if err := c.Server.ValidateTools(); err != nil {
+		return err
+	}
+	if _, _, err := c.Server.Audit.Syslog.Endpoint(); err != nil {
 		return err
 	}
 	defaults := Default().Server
