@@ -236,7 +236,8 @@ func (s *auditSyslog) send(timestamp time.Time, httpLocalIP netip.Addr, payload 
 		hostname = source.String()
 	}
 	stamp := timestamp.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
-	message := fmt.Sprintf("<134>1 %s %s %s - mcp-audit - %s", stamp, hostname, ServerName, payload)
+	// RFC 5424 §6.4 requires a byte order mark at the start of a UTF-8 MSG.
+	message := fmt.Sprintf("<134>1 %s %s %s - mcp-audit - \uFEFF%s", stamp, hostname, ServerName, payload)
 	frame := fmt.Sprintf("%d %s", len(message), message)
 	deadline, _ := ctx.Deadline()
 	err := s.conn.SetWriteDeadline(deadline)

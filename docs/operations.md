@@ -1,6 +1,6 @@
 # Operations, freshness, and diagnostics
 
-Use this reference to diagnose stale, partial, denied, offline or slow reads in Forti Intelligence v2.3.0. See [configuration](configuration.md) for setup and [individual tools](tools/README.md) for tool-specific behavior.
+Use this reference to diagnose stale, partial, denied, offline or slow reads in Forti Intelligence v2.3.1. See [configuration](configuration.md) for setup and [individual tools](tools/README.md) for tool-specific behavior.
 
 ## Shared tool contract
 
@@ -23,7 +23,7 @@ Each client action that reaches MCP dispatch produces one JSON line at completio
 
 The base record excludes credentials, arguments, results, and error messages. A shared bearer token alone cannot identify an operator.
 
-**Additional fields in syslog (v2.3.0).** Use the syslog envelope's `HOSTNAME` to find the MCP service IP. The following fields can appear in the forwarded JSON.
+**Additional fields in syslog (since v2.3.0).** Use the syslog envelope's `HOSTNAME` to find the MCP service IP. The following fields can appear in the forwarded JSON.
 
 | Field | When it appears |
 | --- | --- |

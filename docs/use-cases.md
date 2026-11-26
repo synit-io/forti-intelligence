@@ -1,6 +1,6 @@
 # Visual investigation guide
 
-These Forti Intelligence v2.3.0 examples cover a blocked connection, a blocked website, and a failed MCP call. All names, addresses, identifiers, times, and outcomes are fictional.
+These Forti Intelligence v2.3.1 examples cover a blocked connection, a blocked website, and a failed MCP call. All names, addresses, identifiers, times, and outcomes are fictional.
 
 For network incidents, the assistant follows the investigation process in [SYSTEM.md](../SYSTEM.md). Check the tools advertised by the running server before each workflow or follow-up. An administrator can disable individual tools. If a needed read is unavailable, identify the evidence gap. The audit example is for an operator with access to the server logs.
 

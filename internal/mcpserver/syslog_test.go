@@ -37,10 +37,14 @@ func readAuditMessage(reader *bufio.Reader) (hostname, payload string, err error
 		return "", "", err
 	}
 	fields := strings.SplitN(string(frame), " ", 8)
-	if len(fields) != 8 || !strings.HasPrefix(fields[0], "<") || !strings.HasSuffix(fields[0], ">1") || fields[3] != "forti-intelligence" || fields[6] != "-" {
+	if len(fields) != 8 || fields[0] != "<134>1" || fields[3] != "forti-intelligence" || fields[4] != "-" || fields[5] != "mcp-audit" || fields[6] != "-" {
 		return "", "", fmt.Errorf("invalid RFC 5424 header in %q", frame)
 	}
-	return fields[2], fields[7], nil
+	payload, ok := strings.CutPrefix(fields[7], "\xEF\xBB\xBF")
+	if !ok {
+		return "", "", fmt.Errorf("missing UTF-8 byte order mark in syslog MSG")
+	}
+	return fields[2], payload, nil
 }
 
 func TestNewAuditLogRejectsSuppressionWithoutTarget(t *testing.T) {
@@ -275,20 +279,28 @@ func TestConcurrentSyslogFrames(t *testing.T) {
 	}
 }
 
-func TestSyslogNilHostnameWithoutSocketIP(t *testing.T) {
+func TestSyslogWireFormat(t *testing.T) {
 	sender, receiver := net.Pipe()
-	defer sender.Close()
 	defer receiver.Close()
 	syslog := auditSyslog{conn: sender, gate: make(chan struct{}, 1)}
+	timestamp := time.Date(2026, 11, 26, 14, 0, 2, 123456789, time.FixedZone("UTC+2", 2*60*60))
 	sent := make(chan error, 1)
-	go func() { sent <- syslog.send(time.Now(), auditSocketIP(nil), []byte("{}")) }()
+	go func() {
+		defer sender.Close()
+		sent <- syslog.send(timestamp, auditSocketIP(nil), []byte(`{"user":"Zoë"}`))
+	}()
 	_ = receiver.SetReadDeadline(time.Now().Add(3 * time.Second))
-	hostname, payload, err := readAuditMessage(bufio.NewReader(receiver))
-	if err != nil || hostname != "-" || payload != "{}" {
-		t.Fatalf("collector received HOSTNAME %q and %q: %v", hostname, payload, err)
+	wire, err := io.ReadAll(receiver)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := <-sent; err != nil {
 		t.Fatal(err)
+	}
+	// 88 message bytes include the three-byte marker and the two-byte ë.
+	const want = "88 <134>1 2026-11-26T12:00:02.123456Z - forti-intelligence - mcp-audit - \xEF\xBB\xBF" + `{"user":"Zoë"}`
+	if string(wire) != want {
+		t.Fatalf("syslog frame = %q, want %q", wire, want)
 	}
 }
 

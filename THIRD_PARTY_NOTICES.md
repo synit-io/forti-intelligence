@@ -1,6 +1,6 @@
 # Third-party notices
 
-Forti Intelligence v2.3.0 uses the Go runtime and the dependency versions listed below. Their original license texts and notices are reproduced here; they retain their own licenses. The project license in [LICENSE](LICENSE) applies to Forti Intelligence's original code and documentation.
+Forti Intelligence v2.3.1 uses the Go runtime and the dependency versions listed below. Their original license texts and notices are reproduced here; they retain their own licenses. The project license in [LICENSE](LICENSE) applies to Forti Intelligence's original code and documentation.
 
 Distribute this file together with `LICENSE` when distributing a compiled Forti Intelligence binary. The container includes both files in `/usr/share/doc/forti-intelligence/`. Update these notices when dependency versions change.
 

@@ -23,12 +23,12 @@ Use a separate output directory for each revision you compare. The script writes
 
 ## Implementation status
 
-| Area | Available in v2.3.0 |
+| Area | Available in v2.3.1 |
 | --- | --- |
 | Tool discovery | The server advertises 29 tools by default. Disabling a tool removes it from discovery and rejects direct calls. The fixture script measures the default catalog in both rating configurations. |
 | Investigation results | Full detail is the default. The compact view removes duplicate evidence and raw live lookup data. Fixtures compare policy decisions, unknown source ports, multiple destinations, and partial reads across both views. |
 | Log recovery and size limits | Results expose task state and follow-up arguments when available. Oversized results return an explicit error. The overflow fixture uses a 64 KiB cap to exercise recovery at the same unseen offset. The server default is 512 KiB. |
-| Audit logging | Tests cover action outcomes, audit IDs in tool diagnostics, TCP and TLS forwarding, the service IP, optional user and system identifiers, and the stderr fallback when HTTP stdout is suppressed. |
+| Audit logging | Tests cover action outcomes, audit IDs in tool diagnostics, TCP and TLS forwarding, the UTF-8 marker and byte count on the wire, the service IP, optional user and system identifiers, and the stderr fallback when HTTP stdout is suppressed. |
 
 Run `go test -race ./...` for the broader suite, including audit and tool-availability checks. The fixture script measures serialized bytes. Token usage, tool selection, and answer quality require a run in an MCP client. [Tool reference](tools/README.md) · [Audit fields and result metrics](operations.md)
 

@@ -400,6 +400,10 @@ profiles:
 	if bytes.Contains(frame, []byte("test-token")) || bytes.Contains(frame, []byte("203.0.113.41")) {
 		t.Fatalf("unselected HTTP header value in syslog: %q", frame)
 	}
+	payload, ok = strings.CutPrefix(payload, "\xEF\xBB\xBF")
+	if !ok {
+		t.Fatal("syslog MSG missing UTF-8 byte order mark")
+	}
 	var forwarded map[string]any
 	if err := json.Unmarshal([]byte(payload), &forwarded); err != nil {
 		t.Fatal(err)
