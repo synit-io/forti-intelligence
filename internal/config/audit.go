@@ -10,6 +10,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v4"
 )
@@ -30,6 +32,8 @@ type AuditSyslogConfig struct {
 	Target             string `yaml:"target,omitempty"`
 	CAFile             string `yaml:"ca_file,omitempty"`
 	SuppressHTTPStdout bool   `yaml:"suppress_http_stdout,omitempty"`
+	UserHeader         string `yaml:"user_header,omitempty"`
+	SystemID           string `yaml:"system_id,omitempty"`
 }
 
 // Endpoint validates the receiver settings without contacting the receiver.
@@ -43,7 +47,30 @@ func (c AuditSyslogConfig) Endpoint() (address string, tlsConfig *tls.Config, er
 		if c.CAFile != "" {
 			return "", nil, fmt.Errorf("server.audit.syslog.ca_file requires a tls:// target")
 		}
+		if c.UserHeader != "" {
+			return "", nil, fmt.Errorf("server.audit.syslog.user_header requires server.audit.syslog.target")
+		}
+		if c.SystemID != "" {
+			return "", nil, fmt.Errorf("server.audit.syslog.system_id requires server.audit.syslog.target")
+		}
 		return "", nil, nil
+	}
+	if c.UserHeader != "" {
+		if strings.ContainsFunc(c.UserHeader, func(r rune) bool {
+			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+				strings.ContainsRune("!#$%&'*+-.^_`|~", r))
+		}) {
+			return "", nil, fmt.Errorf("server.audit.syslog.user_header must be a valid HTTP header field name")
+		}
+		switch strings.ToLower(c.UserHeader) {
+		case "authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key",
+			"api-key", "x-auth-token", "x-access-token", "x-amz-security-token":
+			return "", nil, fmt.Errorf("server.audit.syslog.user_header must not name a credential header")
+		}
+	}
+	if c.SystemID != "" && (len(c.SystemID) > 128 || strings.TrimSpace(c.SystemID) == "" ||
+		!utf8.ValidString(c.SystemID) || strings.ContainsFunc(c.SystemID, func(r rune) bool { return !unicode.IsPrint(r) })) {
+		return "", nil, fmt.Errorf("server.audit.syslog.system_id must be printable UTF-8 with 1 to 128 bytes and contain a non-space character")
 	}
 
 	endpoint, err := url.Parse(target)

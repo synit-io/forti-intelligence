@@ -23,24 +23,24 @@ import (
 )
 
 // Read the RFC 6587/5425 byte count and the RFC 5424 header, as a collector would.
-func readAuditMessage(reader *bufio.Reader) (string, error) {
+func readAuditMessage(reader *bufio.Reader) (hostname, payload string, err error) {
 	prefix, err := reader.ReadString(' ')
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	size, err := strconv.Atoi(strings.TrimSuffix(prefix, " "))
 	if err != nil || size <= 0 || size > 8192 {
-		return "", fmt.Errorf("invalid syslog frame length %q", prefix)
+		return "", "", fmt.Errorf("invalid syslog frame length %q", prefix)
 	}
 	frame := make([]byte, size)
 	if _, err := io.ReadFull(reader, frame); err != nil {
-		return "", err
+		return "", "", err
 	}
 	fields := strings.SplitN(string(frame), " ", 8)
 	if len(fields) != 8 || !strings.HasPrefix(fields[0], "<") || !strings.HasSuffix(fields[0], ">1") || fields[3] != "forti-intelligence" || fields[6] != "-" {
-		return "", fmt.Errorf("invalid RFC 5424 header in %q", frame)
+		return "", "", fmt.Errorf("invalid RFC 5424 header in %q", frame)
 	}
-	return fields[7], nil
+	return fields[2], fields[7], nil
 }
 
 func TestNewAuditLogRejectsSuppressionWithoutTarget(t *testing.T) {
@@ -51,7 +51,7 @@ func TestNewAuditLogRejectsSuppressionWithoutTarget(t *testing.T) {
 }
 
 func TestAuditWriteAfterClose(t *testing.T) {
-	event := auditEvent{Timestamp: time.Now().UTC(), ID: "late", Transport: "http", Method: "tools/list", Outcome: "ok"}
+	event := auditEvent{Timestamp: time.Now().UTC(), ID: "late", Transport: "http", Method: "tools/list", Outcome: "ok", user: "late-user"}
 	payload, err := json.Marshal(event)
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestAuditWriteAfterClose(t *testing.T) {
 			var local, fallback, diagnostics bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(&diagnostics, nil))
 			audit, err := NewAuditLog(&local, config.AuditSyslogConfig{
-				Target: "tcp://127.0.0.1:514", SuppressHTTPStdout: suppress,
+				Target: "tcp://127.0.0.1:514", SuppressHTTPStdout: suppress, SystemID: "mcp-1",
 			}, logger)
 			if err != nil {
 				t.Fatal(err)
@@ -72,7 +72,8 @@ func TestAuditWriteAfterClose(t *testing.T) {
 
 			wantLocal, wantFallback := string(payload)+"\n", ""
 			if suppress {
-				wantFallback, wantLocal = wantLocal, ""
+				wantFallback = strings.TrimSuffix(string(payload), "}") + `,"user":"late-user","system_id":"mcp-1"}` + "\n"
+				wantLocal = ""
 			}
 			if local.String() != wantLocal || fallback.String() != wantFallback {
 				t.Fatalf("local audit = %q, want %q, fallback audit = %q, want %q", &local, wantLocal, &fallback, wantFallback)
@@ -98,18 +99,28 @@ func TestSyslogForwarding(t *testing.T) {
 		failsTLS           bool
 		suppressHTTPStdout bool
 		stdio              bool
+		ipv6               bool
+		systemID           string
 	}{
 		{name: "plaintext", scheme: "tcp"},
+		{name: "IPv6 plaintext", scheme: "tcp", ipv6: true},
 		{name: "trusted TLS reconnects after outage", scheme: "tls", ca: caFile, refuseFirst: true},
 		{name: "untrusted TLS", scheme: "tls", failsTLS: true},
 		{name: "TLS hostname mismatch", scheme: "tls", ca: caFile, badHostname: true, failsTLS: true},
 		{name: "HTTP syslog only", scheme: "tcp", suppressHTTPStdout: true},
 		{name: "HTTP fallback and recovery", scheme: "tls", ca: caFile, refuseFirst: true, suppressHTTPStdout: true},
-		{name: "stdio with HTTP stdout suppressed", scheme: "tls", ca: caFile, refuseFirst: true, suppressHTTPStdout: true, stdio: true},
+		{name: "stdio with HTTP stdout suppressed", scheme: "tls", ca: caFile, refuseFirst: true, suppressHTTPStdout: true, stdio: true, systemID: "mcp-1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ln, err := net.Listen("tcp4", "127.0.0.1:0")
+			network, listenAddress, wantHostname := "tcp4", "127.0.0.1:0", "127.0.0.1"
+			if tc.ipv6 {
+				network, listenAddress, wantHostname = "tcp6", "[::1]:0", "::1"
+			}
+			ln, err := net.Listen(network, listenAddress)
 			if err != nil {
+				if tc.ipv6 {
+					t.Skipf("IPv6 loopback unavailable: %v", err)
+				}
 				t.Fatal(err)
 			}
 			defer ln.Close()
@@ -118,7 +129,7 @@ func TestSyslogForwarding(t *testing.T) {
 				address = fmt.Sprintf("localhost:%d", ln.Addr().(*net.TCPAddr).Port)
 			}
 			var local, fallback, diagnostics bytes.Buffer
-			cfg := config.AuditSyslogConfig{Target: tc.scheme + "://" + address, CAFile: tc.ca, SuppressHTTPStdout: tc.suppressHTTPStdout}
+			cfg := config.AuditSyslogConfig{Target: tc.scheme + "://" + address, CAFile: tc.ca, SuppressHTTPStdout: tc.suppressHTTPStdout, SystemID: tc.systemID}
 			audit, err := NewAuditLog(&local, cfg, slog.New(slog.NewTextHandler(&diagnostics, nil)))
 			if err != nil {
 				t.Fatal(err)
@@ -151,9 +162,13 @@ func TestSyslogForwarding(t *testing.T) {
 					}
 					conn = secure
 				}
-				message, err := readAuditMessage(bufio.NewReader(conn))
+				hostname, message, err := readAuditMessage(bufio.NewReader(conn))
 				if err != nil {
 					remote <- err.Error()
+					return
+				}
+				if hostname != wantHostname {
+					remote <- fmt.Sprintf("HOSTNAME = %q, want %q", hostname, wantHostname)
 					return
 				}
 				remote <- message
@@ -177,6 +192,9 @@ func TestSyslogForwarding(t *testing.T) {
 				}
 				wantLocal += string(wantForwarded) + "\n"
 				audit.write(event)
+			}
+			if tc.systemID != "" {
+				wantForwarded = []byte(strings.TrimSuffix(string(wantForwarded), "}") + `,"system_id":"mcp-1"}`)
 			}
 			wantWarning := tc.refuseFirst || tc.failsTLS
 			wantFallback := ""
@@ -249,11 +267,28 @@ func TestConcurrentSyslogFrames(t *testing.T) {
 		t.Fatalf("got %d distinct local records, want %d", len(localRecords), count)
 	}
 	for range count {
-		message, err := readAuditMessage(reader)
-		if err != nil || !json.Valid([]byte(message)) || !localRecords[message] {
-			t.Fatalf("collector received %q: %v", message, err)
+		hostname, message, err := readAuditMessage(reader)
+		if err != nil || hostname != "127.0.0.1" || !json.Valid([]byte(message)) || !localRecords[message] {
+			t.Fatalf("collector received HOSTNAME %q and %q: %v", hostname, message, err)
 		}
 		delete(localRecords, message)
+	}
+}
+
+func TestSyslogNilHostnameWithoutSocketIP(t *testing.T) {
+	sender, receiver := net.Pipe()
+	defer sender.Close()
+	defer receiver.Close()
+	syslog := auditSyslog{conn: sender, gate: make(chan struct{}, 1)}
+	sent := make(chan error, 1)
+	go func() { sent <- syslog.send(time.Now(), auditSocketIP(nil), []byte("{}")) }()
+	_ = receiver.SetReadDeadline(time.Now().Add(3 * time.Second))
+	hostname, payload, err := readAuditMessage(bufio.NewReader(receiver))
+	if err != nil || hostname != "-" || payload != "{}" {
+		t.Fatalf("collector received HOSTNAME %q and %q: %v", hostname, payload, err)
+	}
+	if err := <-sent; err != nil {
+		t.Fatal(err)
 	}
 }
 

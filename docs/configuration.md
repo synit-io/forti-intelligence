@@ -1,6 +1,6 @@
 # Configuration and deployment
 
-Build and connect Forti Intelligence v2.2.0 to your Fortinet appliances. For changes affecting existing deployments, see the [upgrade guide](../README.md#upgrading-to-v220).
+Build and connect Forti Intelligence v2.3.0 to your Fortinet appliances. For changes affecting existing deployments, see the [upgrade guide](../README.md#upgrading-to-v230).
 
 ## Enable or disable MCP tools
 
@@ -31,6 +31,8 @@ server:
       target: "tls://logs.example.net:6514"
       ca_file: "/etc/forti-intelligence/syslog-ca.pem"  # optional private CA
       # suppress_http_stdout: true
+      # system_id: "forti-prod-eu1"
+      # user_header: "X-Authenticated-User"
 ```
 
 Use an explicit host and port. With `tls://`, the server verifies the collector's hostname and certificate using system trust. For a private certificate authority (CA), mount its PEM file into the container and set `ca_file` to its path. Use `tcp://host:port` only when plaintext forwarding is intended. Configure the receiver for RFC 5424 messages with a byte-count prefix (octet counting).
@@ -39,9 +41,15 @@ If your deployment collects both stdout and syslog, set `suppress_http_stdout: t
 
 Enabling `suppress_http_stdout` requires a valid syslog target. An invalid target or unreadable CA file prevents startup. [Audit fields and delivery limits](operations.md#mcp-audit-records)
 
-**Upgrade from v2.1.0.** Start the v2.2.0 binary or container with your existing configuration first. Once it is running, enable `suppress_http_stdout` if needed and restart.
+**Source and user identity (v2.3.0).** The syslog `HOSTNAME` field carries the local IP that accepted the MCP HTTP request. For stdio, or when the HTTP socket address is unavailable, it carries the local IP used to connect to the collector. In a container this can be a container IP. Set `system_id` to a stable deployment name such as `forti-prod-eu1` to group records across address changes. Use printable text up to 128 bytes.
 
-**Rollback to v2.1.0.** Remove the `suppress_http_stdout` key before starting the v2.1.0 binary or container. Leaving the key set to `false` also prevents v2.1.0 from starting.
+To record the HTTP user, set `user_header` to the name of a dedicated identity header. Configure your reverse proxy to authenticate the user, overwrite any client-supplied value with that user's identifier, and restrict direct access to the MCP endpoint. A caller who can set this header can choose the identity that appears in the log. Forti Intelligence uses the value for auditing only. Supply an identifier suitable for logging and keep credentials out of this header.
+
+Both settings are optional and require a syslog target. Start v2.3.0 with your existing configuration, then add the keys you need and restart. Before a rollback to v2.2.0, remove both keys. Its configuration parser rejects them even with empty values.
+
+**Upgrade from v2.1.0.** Start the v2.3.0 binary or container with your existing configuration first. Once it is running, enable `suppress_http_stdout` if needed and restart.
+
+**Rollback to v2.1.0.** Remove `system_id`, `user_header`, and `suppress_http_stdout` before starting the v2.1.0 binary or container. Leaving `suppress_http_stdout` set to `false` also prevents v2.1.0 from starting.
 
 ## Requirements
 
@@ -86,10 +94,10 @@ The host also uses DNS for destination hostnames. If you enable audit forwarding
 
 ## Configure
 
-For a new installation, clone the v2.2.0 release as shown below. If you already have that source checked out, start by copying [config.example.yaml](../config.example.yaml) to a private local configuration. Edit its appliance URLs, profile names, permitted ADOMs, and FortiAnalyzer timezone. Remove the FortiAnalyzer profile if you only use FortiManager. The loader expands `${ENV_VAR}` references in YAML, so credentials do not need to be written to the file:
+For a new installation, clone the v2.3.0 release as shown below. If you already have that source checked out, start by copying [config.example.yaml](../config.example.yaml) to a private local configuration. Edit its appliance URLs, profile names, permitted ADOMs, and FortiAnalyzer timezone. Remove the FortiAnalyzer profile if you only use FortiManager. The loader expands `${ENV_VAR}` references in YAML, so credentials do not need to be written to the file:
 
 ```sh
-git clone --branch v2.2.0 https://github.com/synit-io/forti-intelligence.git
+git clone --branch v2.3.0 https://github.com/synit-io/forti-intelligence.git
 cd forti-intelligence
 cp config.example.yaml ./forti-intelligence.yaml
 chmod 600 ./forti-intelligence.yaml
@@ -155,7 +163,7 @@ Inventory starts in the background. See [inventory freshness and diagnostics](op
 For a local MCP client, build the binary with the release version. The `VERSION` value sets both the CLI version and the version reported to MCP clients.
 
 ```sh
-make build VERSION=2.2.0
+make build VERSION=2.3.0
 ./bin/forti-intelligence --version
 ./bin/forti-intelligence --config "$PWD/forti-intelligence.yaml" --transport stdio
 ```
@@ -207,7 +215,7 @@ Keep the listener on localhost unless an authenticated reverse proxy and an expl
 After configuring the YAML and exporting its credential variables and HTTP bearer token, run the release image with its HTTP endpoint bound to localhost.
 
 ```sh
-docker pull synitio/forti-intelligence:2.2.0
+docker pull synitio/forti-intelligence:2.3.0
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   --publish 127.0.0.1:8080:8080 \
@@ -215,12 +223,12 @@ docker run --rm \
   --env FMG_USERNAME --env FMG_PASSWORD \
   --env FAZ_USERNAME --env FAZ_PASSWORD \
   --env FORTI_MCP_HTTP_TOKEN \
-  synitio/forti-intelligence:2.2.0
+  synitio/forti-intelligence:2.3.0
 ```
 
 The image runs as UID 65532 by default. This example uses your host UID/GID so it can read the owner-only configuration created above. Set `FORTI_MCP_HTTP_TOKEN` as in the HTTP example. Mount any configured private CA files at their YAML paths, ensure they are readable by the container user, and pass additional environment variables if you add profiles. `/ready` reports whether the first inventory snapshot exists; `/metrics` exposes Prometheus metrics. With bearer authentication configured, include the token on HTTP requests to these endpoints and `/healthz`.
 
-To build locally from the release checkout, run `docker build --build-arg VERSION=2.2.0 -t forti-intelligence:local .` and use `forti-intelligence:local` in the run command. The build context excludes local configurations, environment files, private keys/certificates, logs, and the ignored local `testdata/` capture directory. The image includes the project license and dependency notices at `/usr/share/doc/forti-intelligence/`.
+To build locally from the release checkout, run `docker build --build-arg VERSION=2.3.0 -t forti-intelligence:local .` and use `forti-intelligence:local` in the run command. The build context excludes local configurations, environment files, private keys/certificates, logs, and the ignored local `testdata/` capture directory. The image includes the project license and dependency notices at `/usr/share/doc/forti-intelligence/`.
 
 ## Deployment security
 

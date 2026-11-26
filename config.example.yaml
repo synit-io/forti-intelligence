@@ -12,6 +12,8 @@ server:
   #   syslog:
   #     target: "tls://logs.example.net:6514"
   #     ca_file: "/etc/forti-intelligence/syslog-ca.pem"  # optional private CA
+  #     user_header: "X-Authenticated-User"  # header overwritten by your authenticating proxy
+  #     system_id: "forti-prod-eu1"          # stable name for this MCP service
   #     suppress_http_stdout: true  # HTTP: use syslog, with stderr on send failure
   refresh_interval: "1h"
   refresh_timeout: "2m"

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -99,6 +100,55 @@ func TestAuditSyslogSuppressHTTPStdout(t *testing.T) {
 				t.Fatalf("suppress_http_stdout = %v, want %v", got, tc.wantSuppression)
 			}
 		})
+	}
+}
+
+func TestAuditSyslogIdentityConfiguration(t *testing.T) {
+	const target = "tcp://logs.example.net:514"
+	for _, tc := range []struct {
+		name, target, userHeader, systemID, wantError string
+	}{
+		{name: "both omitted"},
+		{name: "both configured", target: target, userHeader: "x-Audit-User_1", systemID: strings.Repeat("é", 64)},
+		{name: "user header needs a target", userHeader: "X-Audit-User", wantError: "user_header requires server.audit.syslog.target"},
+		{name: "system ID needs a target", target: " ", systemID: "mcp-1", wantError: "system_id requires server.audit.syslog.target"},
+		{name: "header with spaces", target: target, userHeader: "X Audit User", wantError: "valid HTTP header field name"},
+		{name: "header with colon", target: target, userHeader: "X-Audit-User:", wantError: "valid HTTP header field name"},
+		{name: "header with non-ASCII letter", target: target, userHeader: "X-Üser", wantError: "valid HTTP header field name"},
+		{name: "blank system ID", target: target, systemID: " ", wantError: "system_id must be printable UTF-8"},
+		{name: "system ID too long", target: target, systemID: strings.Repeat("é", 65), wantError: "system_id must be printable UTF-8"},
+		{name: "system ID with control character", target: target, systemID: "mcp-1\n", wantError: "system_id must be printable UTF-8"},
+		{name: "system ID with invisible format character", target: target, systemID: "mcp-1\u200b", wantError: "system_id must be printable UTF-8"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "audit.yaml")
+			contents := fmt.Sprintf("server:\n  audit:\n    syslog:\n      target: %q\n      user_header: %q\n      system_id: %q\n",
+				tc.target, tc.userHeader, tc.systemID)
+			if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("Load() error = %v, want %q", err, tc.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			syslog := cfg.Server.Audit.Syslog
+			if syslog.UserHeader != tc.userHeader || syslog.SystemID != tc.systemID {
+				t.Fatalf("unexpected syslog identity settings: %#v", syslog)
+			}
+		})
+	}
+
+	for _, header := range []string{"AUTHORIZATION", "proxy-authorization", "cooKIE", "Set-Cookie", "X-Api-Key", "Api-Key", "X-Auth-Token", "X-Access-Token", "X-Amz-Security-Token"} {
+		_, _, err := (AuditSyslogConfig{Target: target, UserHeader: header}).Endpoint()
+		if err == nil || !strings.Contains(err.Error(), "must not name a credential header") {
+			t.Errorf("Endpoint() accepted credential header %q: %v", header, err)
+		}
 	}
 }
 

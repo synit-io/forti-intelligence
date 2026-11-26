@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -261,6 +262,8 @@ func testCLIHTTPAudit(t *testing.T, suppressStdout bool) {
     syslog:
       target: "tcp://%s"
       suppress_http_stdout: %t
+      user_header: "X-Authenticated-User"
+      system_id: "forti-prod-eu1"
 profiles:
   - name: test
     product: fortimanager
@@ -349,6 +352,8 @@ profiles:
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("X-Authenticated-User", "alice@example.org")
+	req.Header.Set("X-Forwarded-For", "203.0.113.41")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	response, err := client.Do(req)
@@ -386,16 +391,40 @@ profiles:
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, payload, ok := strings.Cut(string(frame), " mcp-audit - ")
-	var record struct{ Method, Transport, Outcome string }
-	if !ok || json.Unmarshal([]byte(payload), &record) != nil || record.Method != "tools/list" || record.Transport != "http" || record.Outcome != "ok" {
-		t.Fatalf("expected one tools/list audit record at syslog collector, got %q", frame)
+	envelope, payload, ok := strings.Cut(string(frame), " mcp-audit - ")
+	fields := strings.Fields(envelope)
+	// The byte count, priority/version and timestamp precede the syslog hostname.
+	if !ok || len(fields) != 6 || fields[3] != "127.0.0.1" {
+		t.Fatalf("expected the MCP listener IP in the syslog hostname, got %q", envelope)
 	}
-	wantStdout := payload + "\n"
+	if bytes.Contains(frame, []byte("test-token")) || bytes.Contains(frame, []byte("203.0.113.41")) {
+		t.Fatalf("unselected HTTP header value in syslog: %q", frame)
+	}
+	var forwarded map[string]any
+	if err := json.Unmarshal([]byte(payload), &forwarded); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"method": "tools/list", "transport": "http", "outcome": "ok",
+		"user": "alice@example.org", "system_id": "forti-prod-eu1",
+	} {
+		if forwarded[key] != want {
+			t.Errorf("syslog %s = %v, want %q", key, forwarded[key], want)
+		}
+	}
 	if suppressStdout {
-		wantStdout = ""
+		if stdout.Len() != 0 {
+			t.Fatalf("expected empty stdout, got %q", &stdout)
+		}
+		return
 	}
-	if stdout.String() != wantStdout {
-		t.Fatalf("stdout = %q, want %q", &stdout, wantStdout)
+	delete(forwarded, "user")
+	delete(forwarded, "system_id")
+	var local map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &local); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(local, forwarded) {
+		t.Fatalf("stdout = %v, want base audit fields %v", local, forwarded)
 	}
 }

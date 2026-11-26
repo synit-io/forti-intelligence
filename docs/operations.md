@@ -1,6 +1,6 @@
 # Operations, freshness, and diagnostics
 
-Use this reference to diagnose stale, partial, denied, offline or slow reads in Forti Intelligence v2.2.0. See [configuration](configuration.md) for setup and [individual tools](tools/README.md) for tool-specific behavior.
+Use this reference to diagnose stale, partial, denied, offline or slow reads in Forti Intelligence v2.3.0. See [configuration](configuration.md) for setup and [individual tools](tools/README.md) for tool-specific behavior.
 
 ## Shared tool contract
 
@@ -21,9 +21,16 @@ Each client action that reaches MCP dispatch produces one JSON line at completio
 | `outcome` | `ok` or `error`. A tool result marked `isError` counts as an error. |
 | `duration_ms` | Elapsed action time before audit output, in milliseconds. |
 
-The field list excludes credentials, arguments, results, and error messages. A shared HTTP bearer token cannot identify an individual operator.
+The base record excludes credentials, arguments, results, and error messages. A shared bearer token alone cannot identify an operator.
 
-By default, the service writes each record locally before attempting syslog. With `server.audit.syslog.suppress_http_stdout: true`, HTTP sends directly to syslog. If the send fails, look on stderr for the full audit record and a forwarding warning with the same `audit_id`. Stdio writes its audit record to stderr once, including when forwarding fails.
+**Additional fields in syslog (v2.3.0).** Use the syslog envelope's `HOSTNAME` to find the MCP service IP. The following fields can appear in the forwarded JSON.
+
+| Field | When it appears |
+| --- | --- |
+| `system_id` | On HTTP and stdio records when a deployment identifier is configured. |
+| `user` | On HTTP records when the configured header contains one nonempty, printable identity of up to 256 bytes. The server omits this field for missing, repeated, comma-separated or invalid values. |
+
+By default, local audit records contain the base fields above. With `server.audit.syslog.suppress_http_stdout: true`, HTTP sends directly to syslog. If the send fails, stderr receives the full JSON payload, including any `user` and `system_id`, and a warning with the same `audit_id`. Stdio writes the base record to stderr once, including when forwarding fails.
 
 Each record has a one-second budget for syslog, including waiting for the connection. Later records can reconnect after a failure. There is no replay or acknowledgment of collector storage. A process killed during an action may leave no completion record for that action. [Configure syslog forwarding](configuration.md#audit-forwarding) · [Trace a failed MCP call](use-cases.md#example-3-trace-a-failed-mcp-call)
 

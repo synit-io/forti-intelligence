@@ -1,13 +1,17 @@
 package mcpserver
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -109,5 +113,113 @@ func TestAuditRecordsDispatchedMCPActions(t *testing.T) {
 	handler.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/mcp", nil))
 	if resp.Code != http.StatusUnauthorized || local.Len() != 0 {
 		t.Fatalf("authentication rejection reached audit: status=%d log=%q", resp.Code, &local)
+	}
+}
+
+func TestHTTPAuditSyslogIdentity(t *testing.T) {
+	collector, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer collector.Close()
+	if err := collector.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var local bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := config.Default()
+	cfg.Server.HTTPBearerToken = "test-private-token"
+	audit, err := NewAuditLog(&local, config.AuditSyslogConfig{
+		Target: "tcp://" + collector.Addr().String(), UserHeader: "x-audit-user", SystemID: "mcp-1",
+	}, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer audit.Close()
+	server := NewWithAudit(service.New(cfg, inventory.NewStore(nil, 0, 1), nil, nil), cfg.Server, logger, audit)
+	handler := server.StreamableHTTPHandler()
+
+	const listenIP = "fe80::a"
+	var connection net.Conn
+	defer func() {
+		if connection != nil {
+			connection.Close()
+		}
+	}()
+	var reader *bufio.Reader
+	atLimit := strings.Repeat("é", 128)
+	for _, tc := range []struct {
+		name, wantUser string
+		values         []string
+		noSocketIP     bool
+	}{
+		{name: "one value", values: []string{"  Alice Müller  "}, wantUser: "Alice Müller"},
+		{name: "missing on next request", noSocketIP: true},
+		{name: "at length limit", values: []string{atLimit}, wantUser: atLimit},
+		{name: "multiple values", values: []string{"alice", "alice"}},
+		{name: "comma joined", values: []string{"alice,bob"}},
+		{name: "blank", values: []string{"  "}},
+		{name: "too long", values: []string{atLimit + "a"}},
+		{name: "invalid UTF-8", values: []string{"alice\xff"}},
+		{name: "control character", values: []string{"alice\tbob"}},
+		{name: "invisible format character", values: []string{"alice\u200bbob"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			local.Reset()
+			req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+			req.Host = "example.org"
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			req.Header.Set("Authorization", "Bearer "+cfg.Server.HTTPBearerToken)
+			req.Header.Set("Forwarded", "for=192.0.2.1;host=192.0.2.2")
+			req.Header.Set("X-Forwarded-For", "192.0.2.3")
+			req.Header.Set("X-Forwarded-Host", "192.0.2.4")
+			req.Header.Set("X-Other-User", "someone else")
+			for _, value := range tc.values {
+				req.Header.Add("X-Audit-USER", value)
+			}
+			wantHostname := "127.0.0.1"
+			if !tc.noSocketIP {
+				req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey,
+					&net.TCPAddr{IP: net.ParseIP(listenIP), Port: 8443, Zone: "en0"}))
+				wantHostname = listenIP
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			if response.Code != http.StatusOK {
+				t.Fatalf("HTTP %d: %s", response.Code, response.Body)
+			}
+			if reader == nil {
+				connection, err = collector.Accept()
+				if err != nil {
+					t.Fatal(err)
+				}
+				reader = bufio.NewReader(connection)
+			}
+			if err := connection.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			hostname, payload, err := readAuditMessage(reader)
+			if err != nil || hostname != wantHostname {
+				t.Fatalf("HOSTNAME = %q, want %q, read error = %v", hostname, wantHostname, err)
+			}
+			var forwarded, localRecord map[string]any
+			if err := json.Unmarshal([]byte(payload), &forwarded); err != nil {
+				t.Fatal(err)
+			}
+			user, userPresent := forwarded["user"]
+			if forwarded["system_id"] != "mcp-1" || userPresent != (tc.wantUser != "") ||
+				(userPresent && user != tc.wantUser) || strings.Contains(payload, cfg.Server.HTTPBearerToken) {
+				t.Fatalf("unexpected forwarded audit: %s", payload)
+			}
+			if err := json.Unmarshal(local.Bytes(), &localRecord); err != nil {
+				t.Fatal(err)
+			}
+			delete(forwarded, "user")
+			delete(forwarded, "system_id")
+			if !reflect.DeepEqual(forwarded, localRecord) {
+				t.Fatalf("local audit differs from base record: %s", &local)
+			}
+		})
 	}
 }

@@ -1,6 +1,6 @@
 # Fortinet traffic investigation
 
-These terms describe the scope of traffic evidence in Forti Intelligence v2.2.0.
+These terms describe the scope of traffic evidence in Forti Intelligence v2.3.0.
 
 ## Language
 

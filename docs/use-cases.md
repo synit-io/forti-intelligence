@@ -1,6 +1,6 @@
 # Visual investigation guide
 
-These Forti Intelligence v2.2.0 examples cover a blocked connection, a blocked website, and a failed MCP call. All names, addresses, identifiers, times, and outcomes are fictional.
+These Forti Intelligence v2.3.0 examples cover a blocked connection, a blocked website, and a failed MCP call. All names, addresses, identifiers, times, and outcomes are fictional.
 
 For network incidents, the assistant follows the investigation process in [SYSTEM.md](../SYSTEM.md). Check the tools advertised by the running server before each workflow or follow-up. An administrator can disable individual tools. If a needed read is unavailable, identify the evidence gap. The audit example is for an operator with access to the server logs.
 
@@ -188,8 +188,9 @@ An expected answer identifies which hop and profile has a configured or observed
 > A log search failed around `10:05 UTC`. Which call failed, and what did the server report?
 
 1. Find the `tools/call` completion record for `search_fortianalyzer_logs` near that time. For HTTP, check stdout by default or the syslog collector if stdout audit output is suppressed. For stdio, check the server's stderr.
-2. Take the `audit_id` from that record and search server diagnostics for the same value. For example, a record with `outcome: "error"` and a matching `MCP tool failed` diagnostic with `kind: "permission_denied"` identifies a rejected search. Check the reported resource and the analyzer account's permissions.
-3. If the collector has no matching entry, check stderr for a forwarding warning. When HTTP stdout audit output is suppressed, a detected send failure also puts the original audit record on stderr. Use the shared `audit_id` to match them. HTTP authentication failures occur before MCP dispatch and leave no MCP audit record.
+2. If several services send to one collector, narrow the search by service IP (`HOSTNAME`) or configured `system_id`. For an HTTP call, you can also filter by the `user` supplied by your authenticating proxy.
+3. Take the `audit_id` from that record and search server diagnostics for the same value. For example, a record with `outcome: "error"` and a matching `MCP tool failed` diagnostic with `kind: "permission_denied"` identifies a rejected search. Check the reported resource and the analyzer account's permissions.
+4. If the collector has no matching entry, check stderr for a forwarding warning. When HTTP stdout audit output is suppressed, a detected send failure also puts the original audit record on stderr. Use the shared `audit_id` to match them. HTTP authentication failures occur before MCP dispatch and leave no MCP audit record.
 
 An audit record identifies a completed server action. Use FortiAnalyzer logs to establish what happened to the network flow. [Audit fields and coverage](operations.md#mcp-audit-records) · [Configure syslog forwarding](configuration.md#audit-forwarding)
 
