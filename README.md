@@ -1,6 +1,6 @@
 # Forti Intelligence MCP server
 
-Understand why a connection fails, which firewall handles it, and what evidence supports the answer. Forti Intelligence v2.1.0 connects an MCP-compatible assistant to your FortiManager and optional FortiAnalyzer so you can investigate Fortinet networks in plain language.
+Understand why a connection fails, which firewall handles it, and what evidence supports the answer. Forti Intelligence v2.2.0 connects an MCP-compatible assistant to your FortiManager and optional FortiAnalyzer so you can investigate Fortinet networks in plain language.
 
 The server brings inventory, routing, policies, inspection profiles, current firewall state, and logs into one investigation. It helps the assistant follow traffic across managed firewalls, compare configuration with observed events, and explain the next useful check with the device and policy identifiers an administrator needs.
 
@@ -82,10 +82,10 @@ For the source build below, use Make and Go 1.27.4 or newer. CI and the release 
 
 Copy [config.example.yaml](config.example.yaml) to a private local configuration. Set the appliance URLs and allowed ADOMs, then supply its credential variables through your shell, MCP client, or deployment secret store. A `.env` file is not loaded automatically. If using FortiAnalyzer, set its profile `timezone`; remove that profile for FortiManager-only use.
 
-Clone the release below. If you already have v2.1.0 checked out, start at the copy step.
+For a new installation, clone the release below. If you already have v2.2.0 checked out, start at the copy step. For an existing deployment, keep your configuration and follow the [upgrade steps](#upgrading-to-v220).
 
 ```sh
-git clone --branch v2.1.0 https://github.com/synit-io/forti-intelligence.git
+git clone --branch v2.2.0 https://github.com/synit-io/forti-intelligence.git
 cd forti-intelligence
 cp config.example.yaml ./forti-intelligence.yaml
 chmod 600 ./forti-intelligence.yaml
@@ -94,7 +94,7 @@ export FMG_PASSWORD='replace-with-your-FortiManager-password'
 # Only if you retain the FortiAnalyzer profile:
 export FAZ_USERNAME=api-readonly
 export FAZ_PASSWORD='replace-with-your-FortiAnalyzer-password'
-make build VERSION=2.1.0
+make build VERSION=2.2.0
 ./bin/forti-intelligence --version
 ```
 
@@ -120,7 +120,14 @@ If the client starts with a clean environment, add the credential variables to i
 
 For multiple appliance profiles, permissions, private CAs, Streamable HTTP, bearer authentication, and Docker, follow the [configuration and deployment guide](docs/configuration.md). For freshness, caching, partial reads, or slow requests, see [operations and diagnostics](docs/operations.md). Restrict MCP access to intended users and review your client's model-provider data-sharing settings before sending sensitive inventory, identities, or logs.
 
-The `synitio/forti-intelligence:2.1.0` image supports Linux on AMD64 and ARM64. [Run with Docker](docs/configuration.md#run-with-docker)
+The `synitio/forti-intelligence:2.2.0` image supports Linux on AMD64 and ARM64. [Run with Docker](docs/configuration.md#run-with-docker)
+
+## Upgrading to v2.2.0
+
+1. Start the v2.2.0 binary or container with your existing v2.1.0 configuration.
+2. If you collect HTTP audit records through syslog and want to suppress the stdout copy, configure a valid `server.audit.syslog.target`, set `server.audit.syslog.suppress_http_stdout: true`, and restart. On a forwarding failure, the server writes the record and a warning to stderr. [Audit forwarding](docs/configuration.md#audit-forwarding)
+
+**Rollback to v2.1.0.** Remove `suppress_http_stdout` from the configuration before starting the old version. v2.1.0 rejects the key even when its value is `false`.
 
 ## Upgrading to v2.1.0
 
@@ -130,7 +137,7 @@ Existing v2.0.0 configurations and tool calls work without edits. Audit logging 
 
 Each action that reaches MCP dispatch produces one JSON record on completion. HTTP deployments write it to stdout. Local stdio clients receive protocol messages on stdout and audit records on stderr. The record includes the method, registered tool name when applicable, outcome, and duration. Arguments and results stay out of the audit record.
 
-Use `audit_id` to find matching tool diagnostics. Set `server.audit.syslog.target` to forward a copy to a collector. The development version also supports `server.audit.syslog.suppress_http_stdout` to avoid duplicate HTTP audit records when both streams are collected. [Syslog configuration](docs/configuration.md#audit-forwarding) · [Audit fields and coverage](docs/operations.md#mcp-audit-records)
+Use `audit_id` to find matching tool diagnostics. Set `server.audit.syslog.target` to forward a copy to a collector. [Syslog configuration](docs/configuration.md#audit-forwarding) · [Audit fields and coverage](docs/operations.md#mcp-audit-records)
 
 ## Upgrading to v2.0.0
 
@@ -162,8 +169,8 @@ Run the project checks before submitting code changes:
 ```sh
 go test -race ./...
 go vet ./...
-make build VERSION=2.1.0
-docker build --build-arg VERSION=2.1.0 -t forti-intelligence:local .
+make build VERSION=2.2.0
+docker build --build-arg VERSION=2.2.0 -t forti-intelligence:local .
 ```
 
 ## License

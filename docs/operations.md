@@ -1,6 +1,6 @@
 # Operations, freshness, and diagnostics
 
-Use this reference to diagnose stale, partial, denied, offline or slow reads in Forti Intelligence v2.1.0. See [configuration](configuration.md) for setup and [individual tools](tools/README.md) for tool-specific behavior.
+Use this reference to diagnose stale, partial, denied, offline or slow reads in Forti Intelligence v2.2.0. See [configuration](configuration.md) for setup and [individual tools](tools/README.md) for tool-specific behavior.
 
 ## Shared tool contract
 
