@@ -43,6 +43,47 @@ func readAuditMessage(reader *bufio.Reader) (string, error) {
 	return fields[7], nil
 }
 
+func TestNewAuditLogRejectsSuppressionWithoutTarget(t *testing.T) {
+	_, err := NewAuditLog(nil, config.AuditSyslogConfig{SuppressHTTPStdout: true}, nil)
+	if err == nil || !strings.Contains(err.Error(), "suppress_http_stdout requires server.audit.syslog.target") {
+		t.Fatalf("NewAuditLog() error = %v, want missing target error", err)
+	}
+}
+
+func TestAuditWriteAfterClose(t *testing.T) {
+	event := auditEvent{Timestamp: time.Now().UTC(), ID: "late", Transport: "http", Method: "tools/list", Outcome: "ok"}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, suppress := range []bool{false, true} {
+		t.Run(fmt.Sprintf("suppress=%t", suppress), func(t *testing.T) {
+			var local, fallback, diagnostics bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&diagnostics, nil))
+			audit, err := NewAuditLog(&local, config.AuditSyslogConfig{
+				Target: "tcp://127.0.0.1:514", SuppressHTTPStdout: suppress,
+			}, logger)
+			if err != nil {
+				t.Fatal(err)
+			}
+			audit.httpFallback = &fallback
+			audit.Close()
+			audit.write(event)
+
+			wantLocal, wantFallback := string(payload)+"\n", ""
+			if suppress {
+				wantFallback, wantLocal = wantLocal, ""
+			}
+			if local.String() != wantLocal || fallback.String() != wantFallback {
+				t.Fatalf("local audit = %q, want %q, fallback audit = %q, want %q", &local, wantLocal, &fallback, wantFallback)
+			}
+			if suppress != strings.Contains(diagnostics.String(), `msg="MCP audit syslog forwarding failed" audit_id=late`) {
+				t.Fatalf("unexpected forwarding diagnostics: %s", &diagnostics)
+			}
+		})
+	}
+}
+
 func TestSyslogForwarding(t *testing.T) {
 	fixture := httptest.NewTLSServer(nil)
 	fixture.Close()
@@ -51,15 +92,20 @@ func TestSyslogForwarding(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name, scheme, ca string
-		badHostname      bool
-		refuseFirst      bool
-		failsTLS         bool
+		name, scheme, ca   string
+		badHostname        bool
+		refuseFirst        bool
+		failsTLS           bool
+		suppressHTTPStdout bool
+		stdio              bool
 	}{
 		{name: "plaintext", scheme: "tcp"},
 		{name: "trusted TLS reconnects after outage", scheme: "tls", ca: caFile, refuseFirst: true},
 		{name: "untrusted TLS", scheme: "tls", failsTLS: true},
 		{name: "TLS hostname mismatch", scheme: "tls", ca: caFile, badHostname: true, failsTLS: true},
+		{name: "HTTP syslog only", scheme: "tcp", suppressHTTPStdout: true},
+		{name: "HTTP fallback and recovery", scheme: "tls", ca: caFile, refuseFirst: true, suppressHTTPStdout: true},
+		{name: "stdio with HTTP stdout suppressed", scheme: "tls", ca: caFile, refuseFirst: true, suppressHTTPStdout: true, stdio: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ln, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -71,13 +117,14 @@ func TestSyslogForwarding(t *testing.T) {
 			if tc.badHostname {
 				address = fmt.Sprintf("localhost:%d", ln.Addr().(*net.TCPAddr).Port)
 			}
-			var local, diagnostics bytes.Buffer
-			cfg := config.AuditSyslogConfig{Target: tc.scheme + "://" + address, CAFile: tc.ca}
+			var local, fallback, diagnostics bytes.Buffer
+			cfg := config.AuditSyslogConfig{Target: tc.scheme + "://" + address, CAFile: tc.ca, SuppressHTTPStdout: tc.suppressHTTPStdout}
 			audit, err := NewAuditLog(&local, cfg, slog.New(slog.NewTextHandler(&diagnostics, nil)))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer audit.Close()
+			audit.httpFallback = &fallback
 
 			remote := make(chan string, 1)
 			go func() {
@@ -112,18 +159,35 @@ func TestSyslogForwarding(t *testing.T) {
 				remote <- message
 			}()
 			event := auditEvent{Timestamp: time.Now().UTC(), ID: "first", Transport: "http", Method: "tools/list", Outcome: "ok"}
+			if tc.stdio {
+				event.Transport = "stdio"
+			}
+			first, err := json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantLocal := string(first) + "\n"
+			wantForwarded := first
 			audit.write(event)
 			if tc.refuseFirst {
 				event.ID = "second"
+				wantForwarded, err = json.Marshal(event)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantLocal += string(wantForwarded) + "\n"
 				audit.write(event)
 			}
-			lines := strings.Split(strings.TrimSuffix(local.String(), "\n"), "\n")
-			wantLines := 1
-			if tc.refuseFirst {
-				wantLines++
+			wantWarning := tc.refuseFirst || tc.failsTLS
+			wantFallback := ""
+			if tc.suppressHTTPStdout && !tc.stdio {
+				wantLocal = ""
+				if wantWarning {
+					wantFallback = string(first) + "\n"
+				}
 			}
-			if len(lines) != wantLines || !strings.Contains(lines[0], `"audit_id":"first"`) {
-				t.Fatalf("local audit records: %q", lines)
+			if local.String() != wantLocal || fallback.String() != wantFallback {
+				t.Fatalf("local audit = %q, want %q, fallback audit = %q, want %q", &local, wantLocal, &fallback, wantFallback)
 			}
 			select {
 			case received := <-remote:
@@ -131,13 +195,17 @@ func TestSyslogForwarding(t *testing.T) {
 					if received != "TLS handshake failed" {
 						t.Fatalf("collector accepted invalid TLS: %q", received)
 					}
-				} else if !json.Valid([]byte(received)) || received != lines[len(lines)-1] {
-					t.Fatalf("collector received %q, local records %q", received, lines)
+				} else if received != string(wantForwarded) {
+					t.Fatalf("collector received %q, want %q", received, wantForwarded)
 				}
 			case <-time.After(5 * time.Second):
 				t.Fatal("collector did not finish")
 			}
-			if (tc.refuseFirst || tc.failsTLS) != strings.Contains(diagnostics.String(), "WARN") {
+			if wantWarning && (strings.Count(diagnostics.String(), "\n") != 1 ||
+				!strings.Contains(diagnostics.String(), `level=WARN msg="MCP audit syslog forwarding failed" audit_id=first`)) {
+				t.Fatalf("missing forwarding warning for the failed event: %s", &diagnostics)
+			}
+			if !wantWarning && diagnostics.Len() != 0 {
 				t.Fatalf("unexpected forwarding diagnostics: %s", &diagnostics)
 			}
 		})

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -60,14 +61,17 @@ func (s *Server) auditRequests(next mcp.MethodHandler) mcp.MethodHandler {
 
 // AuditLog writes completion events separately from the diagnostic logger.
 type AuditLog struct {
-	output   io.Writer
-	outputMu sync.Mutex
-	logger   *slog.Logger
-	syslog   *auditSyslog
+	output             io.Writer
+	httpFallback       io.Writer
+	outputMu           sync.Mutex
+	logger             *slog.Logger
+	syslog             *auditSyslog
+	suppressHTTPStdout bool
 }
 
 // NewAuditLog validates syslog settings. It connects on the first event.
 // A nil output selects stdout for HTTP and stderr for stdio.
+// When HTTP stdout is suppressed, forwarding failures fall back to stderr.
 func NewAuditLog(output io.Writer, settings config.AuditSyslogConfig, logger *slog.Logger) (*AuditLog, error) {
 	address, tlsConfig, err := settings.Endpoint()
 	if err != nil {
@@ -76,7 +80,7 @@ func NewAuditLog(output io.Writer, settings config.AuditSyslogConfig, logger *sl
 	if logger == nil {
 		logger = slog.Default()
 	}
-	audit := &AuditLog{output: output, logger: logger}
+	audit := &AuditLog{output: output, logger: logger, suppressHTTPStdout: settings.SuppressHTTPStdout}
 	if address != "" {
 		audit.syslog = &auditSyslog{address: address, tlsConfig: tlsConfig, gate: make(chan struct{}, 1)}
 	}
@@ -89,23 +93,35 @@ func (a *AuditLog) write(event auditEvent) {
 		a.logger.Warn("MCP audit encoding failed", "audit_id", event.ID, "error", err)
 		return
 	}
-	output := a.output
-	if output == nil {
-		output = os.Stderr
-		if event.Transport == "http" {
+	httpSyslogOnly := a.suppressHTTPStdout && event.Transport == "http"
+	if !httpSyslogOnly {
+		output := a.output
+		if output == nil && event.Transport == "http" {
 			output = os.Stdout
 		}
-	}
-	a.outputMu.Lock()
-	_, err = output.Write(append(payload, '\n'))
-	a.outputMu.Unlock()
-	if err != nil {
-		a.logger.Warn("MCP local audit write failed", "audit_id", event.ID, "error", err)
+		a.writeLocal(output, event.ID, payload)
 	}
 	if a.syslog != nil {
 		if err := a.syslog.send(event.Timestamp, payload); err != nil {
+			if httpSyslogOnly {
+				a.writeLocal(a.httpFallback, event.ID, payload)
+			} else if err == errAuditSyslogClosed {
+				return
+			}
 			a.logger.Warn("MCP audit syslog forwarding failed", "audit_id", event.ID, "error", err)
 		}
+	}
+}
+
+func (a *AuditLog) writeLocal(output io.Writer, id string, payload []byte) {
+	if output == nil {
+		output = os.Stderr
+	}
+	a.outputMu.Lock()
+	_, err := output.Write(append(payload, '\n'))
+	a.outputMu.Unlock()
+	if err != nil {
+		a.logger.Warn("MCP local audit write failed", "audit_id", id, "error", err)
 	}
 }
 
@@ -123,6 +139,8 @@ func (a *AuditLog) Close() {
 }
 
 const syslogTimeout = time.Second
+
+var errAuditSyslogClosed = errors.New("audit syslog sender is closed")
 
 type auditSyslog struct {
 	address   string
@@ -143,7 +161,7 @@ func (s *auditSyslog) send(timestamp time.Time, payload []byte) error {
 		return ctx.Err()
 	}
 	if s.closed {
-		return nil
+		return errAuditSyslogClosed
 	}
 	if err := ctx.Err(); err != nil {
 		return err

@@ -227,6 +227,12 @@ func TestCLIStdioAuditsToStderr(t *testing.T) {
 }
 
 func TestCLIHTTPStartsAndStopsOnSignal(t *testing.T) {
+	t.Run("stdout and syslog", func(t *testing.T) { testCLIHTTPAudit(t, false) })
+	t.Run("suppress HTTP stdout", func(t *testing.T) { testCLIHTTPAudit(t, true) })
+}
+
+func testCLIHTTPAudit(t *testing.T, suppressStdout bool) {
+	t.Helper()
 	appliance := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Params []map[string]any `json:"params"`
@@ -254,13 +260,14 @@ func TestCLIHTTPStartsAndStopsOnSignal(t *testing.T) {
   audit:
     syslog:
       target: "tcp://%s"
+      suppress_http_stdout: %t
 profiles:
   - name: test
     product: fortimanager
     url: %s
     api_key: test-api-key
     allow_insecure_http: true
-`, collector.Addr(), appliance.URL)
+`, collector.Addr(), suppressStdout, appliance.URL)
 	if err := os.WriteFile(configPath, []byte(contents), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -364,10 +371,6 @@ profiles:
 		conn.Close()
 		t.Fatal("CLI left its HTTP listener open")
 	}
-	var record struct{ Method, Transport, Outcome string }
-	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil || record.Method != "tools/list" || record.Transport != "http" || record.Outcome != "ok" {
-		t.Fatalf("expected exactly one tools/list audit record on stdout: %v, %s", err, &stdout)
-	}
 	_ = collector.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second))
 	conn, err := collector.Accept()
 	if err != nil {
@@ -376,7 +379,19 @@ profiles:
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 	frame, err := io.ReadAll(conn)
-	if err != nil || !strings.HasSuffix(string(frame), " "+strings.TrimSpace(stdout.String())) {
-		t.Fatalf("expected stdout record at syslog collector, got %q: %v", frame, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, payload, ok := strings.Cut(string(frame), " mcp-audit - ")
+	var record struct{ Method, Transport, Outcome string }
+	if !ok || json.Unmarshal([]byte(payload), &record) != nil || record.Method != "tools/list" || record.Transport != "http" || record.Outcome != "ok" {
+		t.Fatalf("expected one tools/list audit record at syslog collector, got %q", frame)
+	}
+	wantStdout := payload + "\n"
+	if suppressStdout {
+		wantStdout = ""
+	}
+	if stdout.String() != wantStdout {
+		t.Fatalf("stdout = %q, want %q", &stdout, wantStdout)
 	}
 }

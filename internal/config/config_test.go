@@ -66,6 +66,42 @@ func TestAuditSyslogConfiguration(t *testing.T) {
 	}
 }
 
+func TestAuditSyslogSuppressHTTPStdout(t *testing.T) {
+	for _, tc := range []struct {
+		name, settings, wantError string
+		wantSuppression           bool
+	}{
+		{name: "omitted", settings: `target: tcp://logs.example.net:514`},
+		{name: "false without a target", settings: `suppress_http_stdout: false`},
+		{name: "true with a target", settings: `target: tls://logs.example.net:6514, suppress_http_stdout: true`, wantSuppression: true},
+		{name: "true without a target", settings: `suppress_http_stdout: true`, wantError: "suppress_http_stdout requires server.audit.syslog.target"},
+		{name: "true with a blank target", settings: `target: "  ", suppress_http_stdout: true`, wantError: "suppress_http_stdout requires server.audit.syslog.target"},
+		{name: "true with an invalid target", settings: `target: udp://logs.example.net:514, suppress_http_stdout: true`, wantError: "server.audit.syslog.target must be"},
+		{name: "wrong type", settings: `suppress_http_stdout: never`, wantError: "server.audit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "audit.yaml")
+			contents := "server:\n  audit:\n    syslog: {" + tc.settings + "}\n"
+			if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("Load() error = %v, want %q", err, tc.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Server.Audit.Syslog.SuppressHTTPStdout; got != tc.wantSuppression {
+				t.Fatalf("suppress_http_stdout = %v, want %v", got, tc.wantSuppression)
+			}
+		})
+	}
+}
+
 func TestLoadSelectsIndependentNamedProfiles(t *testing.T) {
 	t.Setenv("FMG_USER", "fmg-reader")
 	t.Setenv("FMG_PASS", "fmg-secret")

@@ -27,8 +27,9 @@ func (c *AuditConfig) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type AuditSyslogConfig struct {
-	Target string `yaml:"target,omitempty"`
-	CAFile string `yaml:"ca_file,omitempty"`
+	Target             string `yaml:"target,omitempty"`
+	CAFile             string `yaml:"ca_file,omitempty"`
+	SuppressHTTPStdout bool   `yaml:"suppress_http_stdout,omitempty"`
 }
 
 // Endpoint validates the receiver settings without contacting the receiver.
@@ -36,6 +37,9 @@ type AuditSyslogConfig struct {
 func (c AuditSyslogConfig) Endpoint() (address string, tlsConfig *tls.Config, err error) {
 	target := strings.TrimSpace(c.Target)
 	if target == "" {
+		if c.SuppressHTTPStdout {
+			return "", nil, fmt.Errorf("server.audit.syslog.suppress_http_stdout requires server.audit.syslog.target")
+		}
 		if c.CAFile != "" {
 			return "", nil, fmt.Errorf("server.audit.syslog.ca_file requires a tls:// target")
 		}

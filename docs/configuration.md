@@ -20,7 +20,7 @@ These switches control MCP exposure, not internal operations or appliance permis
 
 ## Audit forwarding
 
-Audit logging is automatic in v2.1.0. HTTP writes one JSON record to stdout when an action handled by the MCP server completes. Stdio writes the same format to stderr, alongside diagnostics. Audit output uses JSON regardless of `--log-json`.
+Audit logging is automatic. By default, HTTP writes one JSON record to stdout when an action handled by the MCP server completes. Stdio writes the same format to stderr, alongside diagnostics. Audit output uses JSON regardless of `--log-json`.
 
 Add one collector under `server.audit.syslog` to also send each record there. Restart the service after changing this configuration.
 
@@ -30,11 +30,14 @@ server:
     syslog:
       target: "tls://logs.example.net:6514"
       ca_file: "/etc/forti-intelligence/syslog-ca.pem"  # optional private CA
+      # suppress_http_stdout: true
 ```
 
 Use an explicit host and port. With `tls://`, the server verifies the collector's hostname and certificate using system trust. For a private certificate authority (CA), mount its PEM file into the container and set `ca_file` to its path. Use `tcp://host:port` only when plaintext forwarding is intended. Configure the receiver for RFC 5424 messages with a byte-count prefix (octet counting).
 
-An invalid target or unreadable CA file prevents startup. An unreachable collector or failed TLS handshake produces a warning on stderr. Tool calls continue and retain their local audit records. [Audit fields and delivery limits](operations.md#mcp-audit-records)
+If your deployment collects both stdout and syslog, set `suppress_http_stdout: true` to send HTTP audit records only to syslog. On a detected forwarding failure, the server writes the full JSON record and a warning with the same `audit_id` to stderr. Tool calls continue. Stdio always writes its local audit record to stderr.
+
+The option requires a valid syslog target. An invalid target or unreadable CA file prevents startup. Deploy a binary that supports the setting before adding the key. v2.1.0 rejects it even when set to `false`. [Audit fields and delivery limits](operations.md#mcp-audit-records)
 
 ## Requirements
 

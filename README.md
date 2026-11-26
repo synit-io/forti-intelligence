@@ -130,7 +130,7 @@ Existing v2.0.0 configurations and tool calls work without edits. Audit logging 
 
 Each action that reaches MCP dispatch produces one JSON record on completion. HTTP deployments write it to stdout. Local stdio clients receive protocol messages on stdout and audit records on stderr. The record includes the method, registered tool name when applicable, outcome, and duration. Arguments and results stay out of the audit record.
 
-Use `audit_id` to find matching tool diagnostics. Set `server.audit.syslog.target` to forward a copy to a collector. [Syslog configuration](docs/configuration.md#audit-forwarding) · [Audit fields and coverage](docs/operations.md#mcp-audit-records)
+Use `audit_id` to find matching tool diagnostics. Set `server.audit.syslog.target` to forward a copy to a collector. The development version also supports `server.audit.syslog.suppress_http_stdout` to avoid duplicate HTTP audit records when both streams are collected. [Syslog configuration](docs/configuration.md#audit-forwarding) · [Audit fields and coverage](docs/operations.md#mcp-audit-records)
 
 ## Upgrading to v2.0.0
 

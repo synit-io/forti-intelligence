@@ -23,7 +23,9 @@ Each client action that reaches MCP dispatch produces one JSON line at completio
 
 The field list excludes credentials, arguments, results, and error messages. A shared HTTP bearer token cannot identify an individual operator.
 
-The service writes locally first. Each record has a one-second budget for syslog, including waiting for the connection. If forwarding fails, later records can reconnect. The service leaves missed records in the local stream and skips replay. A process killed during an action may leave no completion record for that action. [Configure syslog forwarding](configuration.md#audit-forwarding) · [Trace a failed MCP call](use-cases.md#example-3-trace-a-failed-mcp-call)
+By default, the service writes each record locally before attempting syslog. With `server.audit.syslog.suppress_http_stdout: true`, HTTP sends directly to syslog. If the send fails, look on stderr for the full audit record and a forwarding warning with the same `audit_id`. Stdio writes its audit record to stderr once, including when forwarding fails.
+
+Each record has a one-second budget for syslog, including waiting for the connection. Later records can reconnect after a failure. There is no replay or acknowledgment of collector storage. A process killed during an action may leave no completion record for that action. [Configure syslog forwarding](configuration.md#audit-forwarding) · [Trace a failed MCP call](use-cases.md#example-3-trace-a-failed-mcp-call)
 
 ## Inventory freshness and scope
 
