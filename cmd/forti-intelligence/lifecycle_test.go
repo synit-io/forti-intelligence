@@ -317,7 +317,11 @@ profiles:
 	case <-time.After(5 * time.Second):
 		t.Fatal("CLI did not start")
 	}
-	client := &http.Client{Timeout: time.Second}
+	// Keep the probes from leaving an unused pooled connection open during shutdown.
+	client := &http.Client{
+		Timeout:   time.Second,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	ready := false
 	for time.Now().Before(deadline) {
